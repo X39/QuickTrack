@@ -1,0 +1,26 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+    <PropertyGroup>
+        <OutputType>Exe</OutputType>
+        <TargetFramework>net6.0</TargetFramework>
+        <ImplicitUsings>enable</ImplicitUsings>
+        <Nullable>enable</Nullable>
+        <ApplicationIcon>icon.ico</ApplicationIcon>
+        <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    </PropertyGroup>
+
+    <ItemGroup>
+      <PackageReference Include="TextCopy" Version="6.1.0" />
+      <PackageReference Include="X39.Util" Version="1.0.0.23" />
+    </ItemGroup>
+
+    <ItemGroup>
+      <Compile Update="Win32\Interop.Raw.cs">
+        <DependentUpon>Interop.cs</DependentUpon>
+      </Compile>
+      <Compile Update="Win32\Interop.SendKeyboardInput.cs">
+        <DependentUpon>Interop.cs</DependentUpon>
+      </Compile>
+    </ItemGroup>
+
+</Project>
