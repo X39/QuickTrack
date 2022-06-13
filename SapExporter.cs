@@ -11,6 +11,7 @@ public class SapExporter
     private readonly TimeLogFile[] _logFiles;
     private readonly string _mappingFile;
     private int _logDepth = 0;
+    private Dictionary<TimeLogFile, TimeLogLine[]> _logLineCache = new();
 
     private enum ETimeout
     {
@@ -55,22 +56,26 @@ public class SapExporter
 
     private void LogDebug(string s)
     {
+#if DEBUG
         new ConsoleString
         {
             Text = string.Concat(new string(' ', _logDepth * 4), s),
             Foreground = ConsoleColor.Gray,
             Background = ConsoleColor.Black,
         }.WriteLine();
+#endif
     }
 
-    private void EnterProject(IReadOnlyDictionary<string, (string Project, string Profession)> projectToStringMap, TimeLogLine timeLogLine)
+    private void EnterProject(IReadOnlyDictionary<string, (string Project, string Profession)> projectToStringMap,
+        TimeLogLine timeLogLine)
     {
         var (project, _) = projectToStringMap[timeLogLine.Project.Trim()];
         LogDebug($"EnterProject('{timeLogLine.Project}' --> '{project}')");
         EnterText(project);
     }
 
-    private void EnterProfession(IReadOnlyDictionary<string, (string Project, string Profession)> projectToStringMap, TimeLogLine timeLogLine)
+    private void EnterProfession(IReadOnlyDictionary<string, (string Project, string Profession)> projectToStringMap,
+        TimeLogLine timeLogLine)
     {
         var (_, profession) = projectToStringMap[timeLogLine.Project.Trim()];
         LogDebug($"EnterProfession('{timeLogLine.Project}' --> '{profession}')");
@@ -145,15 +150,13 @@ public class SapExporter
 
         var projectToStringMap = GetProjectToStringMap();
 
-
-        LogInfo("Once hitting any key another time, a timer of 5 seconds will start to allow you to repeat step 5.");
-        LogInfo("Please hit any again...");
-        Console.ReadKey(true);
-        for (var i = 5; i > 0; i--)
+        foreach (var logFile in _logFiles)
         {
-            LogInfo($"{i}s");
-            Thread.Sleep(1000);
+            _ = GetLogLines(logFile, forceTimeout: false);
         }
+
+
+        Timeout();
 
 
         var previousDate = _logFiles.First().Date;
@@ -169,6 +172,18 @@ public class SapExporter
             }
 
             ExportLogFile(projectToStringMap, logFile);
+        }
+    }
+
+    private void Timeout()
+    {
+        LogInfo("Once pressing any key, a timer of 5 seconds will start to allow you focus the target area.");
+        LogInfo("Please press any key...");
+        Console.ReadKey(true);
+        for (var i = 5; i > 0; i--)
+        {
+            LogInfo($"{i}s");
+            Thread.Sleep(1000);
         }
     }
 
@@ -207,7 +222,7 @@ public class SapExporter
                 continue;
             if (timeLogLine.Project == "break")
                 continue;
-            
+
             askProjectCode:
             new ConsoleString
             {
@@ -219,19 +234,20 @@ public class SapExporter
             if (line.IsNullOrWhiteSpace())
                 goto askProjectCode;
             var project = line;
-            
-            
+
+
             askProfessionCode:
             new ConsoleString
             {
-                Text = $"Please input the profession code to use for '{timeLogLine.Project}' (numerical code preferred):",
+                Text =
+                    $"Please input the profession code to use for '{timeLogLine.Project}' (numerical code preferred):",
                 Foreground = ConsoleColor.Yellow,
                 Background = ConsoleColor.Black,
             }.Write();
             line = Console.ReadLine()?.Trim() ?? string.Empty;
             if (line.IsNullOrWhiteSpace())
                 goto askProfessionCode;
-            
+
             projectToStringMap[timeLogLine.Project.Trim()] = (project, line);
         }
     }
@@ -304,11 +320,14 @@ public class SapExporter
         }
     }
 
-    private void ExportLogFile(IReadOnlyDictionary<string, (string Project, string Profession)> projectToStringMap, TimeLogFile logFile)
+    private void ExportLogFile(
+        IReadOnlyDictionary<string, (string Project, string Profession)> projectToStringMap,
+        TimeLogFile logFile)
     {
         LogInfo("Starting export...");
 
-        foreach (var (value, index) in logFile.GetLines().Indexed())
+        var logLines = GetLogLines(logFile);
+        foreach (var (value, index) in logLines.Indexed())
         {
             LogInfo(value.ToString());
             using var logLineScope = LogScope();
@@ -381,6 +400,7 @@ public class SapExporter
                 PressEnter();
                 WaitFor(Get(ETimeout.Commit));
             }
+
             PressTab();
             // ReSharper disable once StringLiteralTypo
             LogInfo("Entering 'Tätigkeit' (Profession)");
@@ -393,6 +413,7 @@ public class SapExporter
                 PressEnter();
                 WaitFor(Get(ETimeout.Commit));
             }
+
             PressTab();
             WaitFor(Get(ETimeout.Safety));
             PressTab();
@@ -407,6 +428,7 @@ public class SapExporter
                 PressEnter();
                 WaitFor(Get(ETimeout.Commit));
             }
+
             PressTab();
             WaitFor(Get(ETimeout.Safety));
             // ReSharper disable once StringLiteralTypo
@@ -420,6 +442,7 @@ public class SapExporter
                 PressEnter();
                 WaitFor(Get(ETimeout.Commit));
             }
+
             PressTab();
             WaitFor(Get(ETimeout.Safety));
             // ReSharper disable once StringLiteralTypo
@@ -434,6 +457,40 @@ public class SapExporter
                 WaitFor(Get(ETimeout.Commit));
             }
         }
+    }
+
+    private IEnumerable<TimeLogLine> GetLogLines(TimeLogFile logFile, bool forceTimeout = true)
+    {
+        if (_logLineCache.TryGetValue(logFile, out var logLines))
+            return logLines;
+        var lines = logFile.GetLines().ToArray();
+        var totalPause = lines.Aggregate(
+            TimeSpan.Zero, (l, r) => l + (r.Project == "break" ? r.TimeStampEnd - r.TimeStampStart : TimeSpan.Zero));
+        if (totalPause >= TimeSpan.FromMinutes(30))
+            return lines;
+        var delta = TimeSpan.FromMinutes(30) - totalPause;
+        Console.WriteLine($"Missing mandatory break time on {logFile.Date.ToLongDateString()}.");
+        Console.WriteLine($"Got {totalPause} of break time, expected at least {TimeSpan.FromMinutes(30)}.");
+        Console.WriteLine($"Please choose where to append {delta} of mandatory break time.");
+        Console.WriteLine($"Time will be appended AFTER the selected entry.");
+        var line = AskConsole.ForValueFromCollection(lines, (q) => new ConsoleString
+        {
+            Text = q.ToString(),
+            Foreground = ConsoleColor.White,
+            Background = ConsoleColor.Blue,
+        });
+        if (forceTimeout)
+            Timeout();
+        var pre = lines.TakeWhile((q) => q != line);
+        var end = lines.SkipWhile((q) => q != line && pre.Contains(q)).Skip(1);
+        return _logLineCache[logFile] = pre
+            .Append(line)
+            .Append(new TimeLogLine(line.TimeStampEnd, line.TimeStampEnd + delta, "break", "pause"))
+            .Concat(end.Select((q) => q with
+            {
+                TimeStampStart = q.TimeStampStart + delta,
+                TimeStampEnd = q.TimeStampEnd == default ? default : q.TimeStampEnd + delta,
+            })).ToArray();
     }
 
 

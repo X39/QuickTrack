@@ -68,6 +68,9 @@ public static class Programm
         Hitting enter afterwards will end the break.
     sap
         Starts an SAP BBD ui-assisted export
+    rewrite
+    reword
+        Allows to change the description of a time log line from today
     quit
     end
     exit
@@ -98,10 +101,86 @@ public static class Programm
                         }
 
                         break;
-                    case "list":
+                    case "rewrite":
+                    case "reword":
+                    {
                         logFiles = LoadLogFilesFromDisk(files);
-                        lastMessage = PrintTodayLogFile(logFiles, undoQueue);
+                        var todayLogFile = logFiles.FirstOrDefault((q) => q.Date == DateTime.Today.ToDateOnly());
+                        if (todayLogFile is null)
+                        {
+                            new ConsoleString
+                            {
+                                Text = "No log file for today was located.",
+                                Foreground = ConsoleColor.Red,
+                                Background = ConsoleColor.Black,
+                            }.WriteLine();
+                            continue;
+                        }
+                        var timeLogLines = todayLogFile.GetLines().ToArray();
+                        var timeLogLine = AskConsole.ForValueFromCollection(
+                            timeLogLines,
+                            tToString: (timeLogLine) => new ConsoleString
+                            {
+                                Text = timeLogLine.ToString(),
+                                Foreground = ConsoleColor.DarkBlue,
+                                Background = ConsoleColor.Gray,
+                            },
+                            invalidSelectionText: new ConsoleString
+                            {
+                                Text = "Invalid element. Please select one to continue",
+                                Foreground = ConsoleColor.Red,
+                                Background = ConsoleColor.Gray,
+                            });
+                        
+                        new ConsoleString
+                        {
+                            Text = "Selected ",
+                            Foreground = ConsoleColor.Black,
+                            Background = ConsoleColor.Gray,
+                        }.Write();
+                        new ConsoleString
+                        {
+                            Text = timeLogLine.ToString(),
+                            Foreground = ConsoleColor.DarkBlue,
+                            Background = ConsoleColor.Gray,
+                        }.WriteLine();
+                        new ConsoleString
+                        {
+                            Text = "Please enter the new non-empty Description:",
+                            Foreground = ConsoleColor.Black,
+                            Background = ConsoleColor.Gray,
+                        }.WriteLine();
+                        new ConsoleString
+                        {
+                            Text = "> ",
+                            Foreground = ConsoleColor.Black,
+                            Background = ConsoleColor.Gray,
+                        }.Write();
+                        var newDescription = Console.ReadLine()?.Trim();
+                        if (newDescription.IsNullOrWhiteSpace())
+                        {
+                            new ConsoleString
+                            {
+                                Text = "Cannot change to empty description.",
+                                Foreground = ConsoleColor.Red,
+                                Background = ConsoleColor.Black,
+                            }.WriteLine();
+                            continue;
+                        }
+
+                        todayLogFile.Clear();
+                        foreach (var logLine in timeLogLines)
+                        {
+                            if (logLine == timeLogLine)
+                                todayLogFile.Append(timeLogLine with
+                                {
+                                    Message = newDescription,
+                                });
+                            else 
+                                todayLogFile.Append(logLine);
+                        }
                         continue;
+                    }
                     case "sap":
                         Console.BackgroundColor = ConsoleColor.White;
                         Console.ForegroundColor = ConsoleColor.DarkBlue;
@@ -175,6 +254,10 @@ public static class Programm
                         }
 
                         new SapExporter("project-mapping.cfg", selectedLogFile).StartExport();
+                        continue;
+                    case "list":
+                        logFiles = LoadLogFilesFromDisk(files);
+                        lastMessage = PrintTodayLogFile(logFiles, undoQueue);
                         continue;
                     case "list week":
                         logFiles = LoadLogFilesFromDisk(files)
@@ -439,19 +522,7 @@ public static class Programm
         ConsoleColor? background = null,
         ConsoleColor? backgroundBreak = null)
     {
-        var (timeStampStart, timeStampEnd, project, message) = timeLogLine;
-        new ConsoleString(string.Concat(
-            prefix ?? string.Empty,
-            "[",
-            timeStampStart.ToLocalTime().ToTimeOnly().ToString("HH:mm"),
-            " - ",
-            timeStampEnd == default
-                ? "--:--"
-                : timeStampEnd.ToLocalTime().ToTimeOnly().ToString("HH:mm"),
-            "] ",
-            project,
-            ": ",
-            message))
+        new ConsoleString(string.Concat(prefix, timeLogLine))
         {
             Foreground = IsBreakMessage(timeLogLine)
                 ? foregroundBreak ?? ConsoleColor.Gray

@@ -27,20 +27,23 @@ public class TimeLogFile
         foreach (var line in lines)
         {
             var splatted = line.Split("|!|");
-            if (splatted.Length >= 2)
+            if (splatted.Length < 2)
+                continue;
+            var tmp = new TimeLogLine(
+                DateTime.ParseExact(
+                    splatted[0],
+                    "s",
+                    CultureInfo.InvariantCulture,
+                    DateTimeStyles.AssumeUniversal),
+                default,
+                splatted[1],
+                string.Join("|!|", splatted.Skip(2)));
+            if (last.TimeStampStart != default)
             {
-                var tmp = new TimeLogLine(
-                    DateTime.ParseExact(splatted[0], "s", CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal),
-                    default,
-                    splatted[1],
-                    string.Join("|!|", splatted.Skip(2)));
-                if (last.TimeStampStart != default)
-                {
-                    yield return last with {TimeStampEnd = tmp.TimeStampStart};
-                }
-
-                last = tmp;
+                yield return last with {TimeStampEnd = tmp.TimeStampStart};
             }
+
+            last = tmp;
         }
 
         if (last.TimeStampStart != default)
@@ -60,7 +63,15 @@ public class TimeLogFile
             ? File.Open(FilePath, FileMode.Append)
             : File.Open(FilePath, FileMode.CreateNew);
         using var writer = new StreamWriter(file);
+        var timeStampString = timeLogLine.TimeStampStart
+            .ToUniversalTime()
+            .ToString("s", CultureInfo.InvariantCulture);
         writer.WriteLine(
-            $"{timeLogLine.TimeStampStart.ToString("s", CultureInfo.InvariantCulture)}|!|{timeLogLine.Project}|!|{timeLogLine.Message}");
+            $"{timeStampString}|!|{timeLogLine.Project}|!|{timeLogLine.Message}");
+    }
+
+    public void Clear()
+    {
+        using var file = File.Open(FilePath, FileMode.Create);
     }
 }
