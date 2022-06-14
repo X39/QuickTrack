@@ -13,9 +13,11 @@
         <Version>1.0.0.0</Version>
         <AssemblyVersion>1.0.0.0</AssemblyVersion>
         <FileVersion>1.0.0.0</FileVersion>
+        <LangVersion>default</LangVersion>
     </PropertyGroup>
 
     <ItemGroup>
+      <PackageReference Include="Fastenshtein" Version="1.0.0.8" />
       <PackageReference Include="TextCopy" Version="6.1.0" />
       <PackageReference Include="X39.Util" Version="1.0.0.25" />
     </ItemGroup>

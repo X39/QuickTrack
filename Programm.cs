@@ -30,8 +30,7 @@ public static class Programm
         var redoQueue = new Stack<string>();
         var lastMessage = PrintTodayLogFile(logFiles, undoQueue);
         using var consoleCancellationTokenSource = new ConsoleCancellationTokenSource();
-        var isBreak = false;
-        if (lastMessage is not null && (isBreak = IsBreakMessage(lastMessage)))
+        if (lastMessage is not null && (IsBreakMessage(lastMessage)))
         {
             var now = DateTime.Now;
             var minutesPassed = (now - lastMessage.TimeStampStart).TotalMinutes;
@@ -42,322 +41,360 @@ public static class Programm
                     : now.AddMinutes(30 - minutesPassed));
         }
 
-        while (!consoleCancellationTokenSource.IsCancellationRequested)
-        {
-            var line = InteractiveConsoleInput.ReadLine(undoQueue, redoQueue, consoleCancellationTokenSource.Token);
-            undoQueue.Push(line);
-            if (isBreak)
+        var configHost = new ConfigHost(Workspace);
+        var quickTrackHost = new QuickTrackHost(Workspace, logFiles, lastMessage);
+        var commandParser = new CommandParser(new UnmatchedCommand(
+            "project:message | message",
+            "Appends a new line to the log. If project is omitted, the previous one will be used.",
+            quickTrackHost.TryAppendNewLogLine));
+        commandParser.RegisterCommand(
+            new[] {"pause", "break"},
+            "pause | break",
+            "Starts a break and switches time-logging to the pause mode.",
+            (_) => quickTrackHost.StartBreak());
+        commandParser.RegisterCommand(
+            new[] {"rewrite", "reword"},
+            "rewrite | reword",
+            "Allows to change the description from any time log line of today.",
+            (_) =>
             {
-                line = string.Concat(lastMessage?.Project, ":", lastMessage?.Message);
-                isBreak = false;
-            }
-            else
+                var todayLogFile = GetLogFileOfToday(files, out logFiles);
+                if (todayLogFile is null)
+                    return;
+                RewordLogLineOf(todayLogFile);
+            });
+        commandParser.RegisterCommand(
+            new[] {"quit", "end", "exit"},
+            "quit | end | exit",
+            "Writes 'end of day' message and terminates the program.",
+            (_) =>
             {
-                switch (line.ToLower())
+                quickTrackHost.TryAppendNewLogLine("quit");
+                // ReSharper disable once AccessToDisposedClosure
+                consoleCancellationTokenSource.Cancel();
+            });
+        commandParser.RegisterCommand(
+            new[] {"list"},
+            "list [ week | month ]",
+            "Lists the logged entries. " +
+            "If no argument is provided, only today and yesterday will be listed. " +
+            "If week is provided, the previous 7 days will be listed. " +
+            "If month is provided, the previous 31 days will be listed.",
+            (commandArgs) =>
+            {
+                var first = commandArgs.FirstOrDefault();
+                var days = first?.ToLower() switch
                 {
-                    case "help":
-                    case "?":
-                        new ConsoleString(@"HELP:
-    project:message
-        Appends a new line to the log.
-    message
-        Appends a new line to the log with the previous project.
-        If no previous message could be found, an error will be printed.
-    break | pause
-        Initializes break-mode and logs the start of the break.
-        Hitting enter afterwards will end the break.
-    sap
-        Starts an SAP BBD ui-assisted export
-    rewrite
-    reword
-        Allows to change the description of a time log line from today
-    quit
-    end
-    exit
-        Terminates execution.
-    list
-        Lists the logged entries of today and, if applicable, yesterday.
-    list week
-        Lists the logged entries of a whole week (last 7 days).
-    list month
-        Lists the logged entries of a whole month (last 31 days).
-    undo
-        Removes the previous log line.
-        If the log line is not part of today, an error will be raised.")
-                            {
-                                Foreground = ConsoleColor.Black,
-                                Background = ConsoleColor.White,
-                            }
-                            .WriteLine();
-                        continue;
-                    case "pause" when lastMessage is not null:
-                    case "break" when lastMessage is not null:
-
-                        if (line.ToLower() == "pause"
-                            || line.ToLower() == "break")
-                        {
-                            isBreak = true;
-                            line = "break:start";
-                        }
-
-                        break;
-                    case "rewrite":
-                    case "reword":
-                    {
-                        logFiles = LoadLogFilesFromDisk(files);
-                        var todayLogFile = logFiles.FirstOrDefault((q) => q.Date == DateTime.Today.ToDateOnly());
-                        if (todayLogFile is null)
-                        {
-                            new ConsoleString
-                            {
-                                Text = "No log file for today was located.",
-                                Foreground = ConsoleColor.Red,
-                                Background = ConsoleColor.Black,
-                            }.WriteLine();
-                            continue;
-                        }
-                        var timeLogLines = todayLogFile.GetLines().ToArray();
-                        var timeLogLine = AskConsole.ForValueFromCollection(
-                            timeLogLines,
-                            tToString: (timeLogLine) => new ConsoleString
-                            {
-                                Text = timeLogLine.ToString(),
-                                Foreground = ConsoleColor.DarkBlue,
-                                Background = ConsoleColor.Gray,
-                            },
-                            invalidSelectionText: new ConsoleString
-                            {
-                                Text = "Invalid element. Please select one to continue",
-                                Foreground = ConsoleColor.Red,
-                                Background = ConsoleColor.Gray,
-                            });
-                        
-                        new ConsoleString
-                        {
-                            Text = "Selected ",
-                            Foreground = ConsoleColor.Black,
-                            Background = ConsoleColor.Gray,
-                        }.Write();
-                        new ConsoleString
-                        {
-                            Text = timeLogLine.ToString(),
-                            Foreground = ConsoleColor.DarkBlue,
-                            Background = ConsoleColor.Gray,
-                        }.WriteLine();
-                        new ConsoleString
-                        {
-                            Text = "Please enter the new non-empty Description:",
-                            Foreground = ConsoleColor.Black,
-                            Background = ConsoleColor.Gray,
-                        }.WriteLine();
-                        new ConsoleString
-                        {
-                            Text = "> ",
-                            Foreground = ConsoleColor.Black,
-                            Background = ConsoleColor.Gray,
-                        }.Write();
-                        var newDescription = Console.ReadLine()?.Trim();
-                        if (newDescription.IsNullOrWhiteSpace())
-                        {
-                            new ConsoleString
-                            {
-                                Text = "Cannot change to empty description.",
-                                Foreground = ConsoleColor.Red,
-                                Background = ConsoleColor.Black,
-                            }.WriteLine();
-                            continue;
-                        }
-
-                        todayLogFile.Clear();
-                        foreach (var logLine in timeLogLines)
-                        {
-                            if (logLine == timeLogLine)
-                                todayLogFile.Append(timeLogLine with
-                                {
-                                    Message = newDescription,
-                                });
-                            else 
-                                todayLogFile.Append(logLine);
-                        }
-                        continue;
-                    }
-                    case "sap":
-                        Console.BackgroundColor = ConsoleColor.White;
-                        Console.ForegroundColor = ConsoleColor.DarkBlue;
-                        Console.Write("Please enter the inclusive start date you want to modify (xx.xx): ");
-                        var dateString = Console.ReadLine() ?? string.Empty;
-                        Console.ResetColor();
-                        DateOnly startDate;
-                        try
-                        {
-                            startDate = DateOnly.ParseExact(
-                                dateString,
-                                "dd.MM",
-                                CultureInfo.CurrentCulture,
-                                DateTimeStyles.AllowWhiteSpaces);
-                        }
-                        catch (Exception ex)
-                        {
-                            new ConsoleString
-                            {
-                                Text = ex.Message + "\r\n" + ex.StackTrace,
-                                Foreground = ConsoleColor.Red,
-                                Background = ConsoleColor.White,
-                            }.WriteLine();
-                            continue;
-                        }
-
-                        Console.BackgroundColor = ConsoleColor.White;
-                        Console.ForegroundColor = ConsoleColor.DarkBlue;
-                        Console.Write("Please enter the inclusive end date you want to modify (xx.xx) or leave empty for none: ");
-                        DateOnly endDate;
-                        dateString = Console.ReadLine() ?? string.Empty;
-                        if (dateString.IsNullOrWhiteSpace())
-                        {
-                            endDate = DateOnly.MaxValue;
-                        }
-                        else
-                        {
-                            try
-                            {
-                                endDate = DateOnly.ParseExact(
-                                    dateString,
-                                    "dd.MM",
-                                    CultureInfo.CurrentCulture,
-                                    DateTimeStyles.AllowWhiteSpaces);
-                            }
-                            catch (Exception ex)
-                            {
-                                new ConsoleString
-                                {
-                                    Text = ex.Message + "\r\n" + ex.StackTrace,
-                                    Foreground = ConsoleColor.Red,
-                                    Background = ConsoleColor.White,
-                                }.WriteLine();
-                                continue;
-                            }
-                        }
-
-                        var selectedLogFile = LoadLogFilesFromDisk(files)
-                            .Where((q) => q.Date >= startDate)
-                            .Where((q) => q.Date <= endDate)
-                            .ToArray();
-                        if (!selectedLogFile.Any())
-                        {
-                            new ConsoleString
-                            {
-                                Text = $"No log file found for date {startDate}",
-                                Foreground = ConsoleColor.Red,
-                                Background = ConsoleColor.White,
-                            }.WriteLine();
-                            continue;
-                        }
-
-                        new SapExporter("project-mapping.cfg", selectedLogFile).StartExport();
-                        continue;
-                    case "list":
-                        logFiles = LoadLogFilesFromDisk(files);
-                        lastMessage = PrintTodayLogFile(logFiles, undoQueue);
-                        continue;
-                    case "list week":
-                        logFiles = LoadLogFilesFromDisk(files)
-                            .Where((q) => (DateTime.Today - q.Date.ToDateTime(TimeOnly.MinValue)).Days <= 7)
-                            .OrderBy((q) => q.Date)
-                            .ToList();
-                        foreach (var logFile in logFiles)
-                        {
-                            var tag = GetPrettyPrintTag(logFile);
-                            PrintLogFile(logFile, tag);
-                        }
-                        continue;
-                    case "list month":
-                        logFiles = LoadLogFilesFromDisk(files)
-                            .Where((q) => (DateTime.Today - q.Date.ToDateTime(TimeOnly.MinValue)).Days <= 31)
-                            .OrderBy((q) => q.Date)
-                            .ToList();
-                        foreach (var logFile in logFiles)
-                        {
-                            var tag = GetPrettyPrintTag(logFile);
-                            PrintLogFile(logFile, tag);
-                        }
-                        continue;
-                    case "undo":
-                        if (RemoveLastLineOfToday(logFiles))
-                        {
-                            new ConsoleString(
-                                $"Undid last line.")
-                            {
-                                Foreground = ConsoleColor.White,
-                                Background = ConsoleColor.Green,
-                            }.WriteLine();
-                        }
-                        else
-                        {
-                            new ConsoleString(
-                                $"No line found to undo.")
-                            {
-                                Foreground = ConsoleColor.White,
-                                Background = ConsoleColor.Red,
-                            }.WriteLine();
-                        }
-
-                        continue;
-                    case "end":
-                    case "quit":
-                    case "exit":
-                        consoleCancellationTokenSource.Cancel();
-                        line = "quit";
-                        break;
+                    "week" => 7,
+                    "month" => 31,
+                    _ => 0,
+                };
+                logFiles = LoadLogFilesFromDisk(files)
+                    .Where((q) => (DateTime.Today - q.Date.ToDateTime(TimeOnly.MinValue)).Days <= days)
+                    .OrderBy((q) => q.Date)
+                    .ToList();
+                foreach (var logFile in logFiles)
+                {
+                    var tag = GetPrettyPrintTag(logFile);
+                    PrintLogFile(logFile, tag);
                 }
-            }
-
-            if (line.IsNullOrWhiteSpace())
+            });
+        commandParser.RegisterCommand(
+            new[] {"undo"},
+            "undo",
+            "Lists the logged entries. " +
+            "Removes the last log line of today. " +
+            "If no more log lines are available for a day to be removed, nothing will be done.",
+            (_) =>
             {
-                new ConsoleString(
-                    $"Empty line cannot be submitted.")
+                if (RemoveLastLineOfToday(logFiles))
                 {
-                    Foreground = ConsoleColor.White,
-                    Background = ConsoleColor.Red,
-                }.WriteLine();
-                continue;
-            }
-
-            var splatted = line.Split(":");
-            if (splatted.Length == 1 && lastMessage is not null)
-            {
-                splatted = new[] {lastMessage.Project, splatted[0]};
-            }
-
-            if (splatted.Length > 1)
-            {
-                var now = DateTime.Now.ToUniversalTime();
-                var today = now.ToDateOnly();
-                var lastLogFile = logFiles.FirstOrDefault((q) => q.Date == today)
-                                  ?? logFiles.AddAndReturn(
-                                      new TimeLogFile(Path.Combine(Workspace, DateTime.Today.ToString("yyyy-MM-dd")),
-                                          today));
-                var tmp = new TimeLogLine(now, default, splatted[0].Trim(), string.Join(":", splatted.Skip(1)).Trim());
-                lastLogFile.Append(tmp);
-                if (isBreak)
-                {
-                    PrintBreakMessage(now, now.AddMinutes(30));
+                    new ConsoleString(
+                        $"Undid last line.")
+                    {
+                        Foreground = ConsoleColor.White,
+                        Background = ConsoleColor.Green,
+                    }.WriteLine();
                 }
                 else
                 {
-                    Print(tmp);
-                    lastMessage = tmp;
+                    new ConsoleString(
+                        $"No line found to undo.")
+                    {
+                        Foreground = ConsoleColor.White,
+                        Background = ConsoleColor.Red,
+                    }.WriteLine();
+                }
+            });
+        commandParser.RegisterCommand(
+            new[] {"sap"},
+            () => $"sap FROM [ TO ] [ {(SapExporter.WriteLineByDefault(configHost) ? "no" : "NO")} | " +
+                  $"{(SapExporter.WriteLineByDefault(configHost) ? "YES" : "yes")} ]",
+            "Exports the times to sap. " +
+            "FROM and TO are expected to be in the format DD.MM (eg. 13.06). " +
+            "FROM and TO are both inclusive. " +
+            "If the word 'no' is appended, no log line about the export will be written for today. " +
+            "If the word 'yes' is appended, a log line about the export will be written, denoting " +
+            "both the start and end of the actual export (and restoring the previous line). " +
+            $"The default value here is {(SapExporter.WriteLineByDefault(configHost) ? "yes" : "no")} " +
+            "and is bound to the previous export action. " +
+            "If TO is not provided, only the FROM day will be exported.",
+            strings => SapCommand(configHost, quickTrackHost, strings));
+
+        while (!consoleCancellationTokenSource.IsCancellationRequested)
+        {
+            try
+            {
+                commandParser.PromptCommand(undoQueue, redoQueue, consoleCancellationTokenSource.Token);
+            }
+            catch (Exception ex)
+            {
+                new ConsoleString(ex.Message)
+                        {Foreground = ConsoleColor.Red, Background = ConsoleColor.White}
+                    .WriteLine();
+                if (ex.StackTrace is not null)
+                {
+                    new ConsoleString(ex.StackTrace)
+                            {Foreground = ConsoleColor.Red, Background = ConsoleColor.White}
+                        .WriteLine();
                 }
             }
-            else
-            {
-                new ConsoleString(
-                    $"Invalid format. Expected project to be present and separated by colon (project:description) or be 'pause'.")
+        }
+    }
+
+    private static void SapCommand(ConfigHost configHost, QuickTrackHost quickTrackHost, string[] args)
+    {
+        DateOnly startDate;
+        DateOnly endDate;
+        var writeLog = true;
+        switch (args.Length)
+        {
+            case 1:
+                try
                 {
-                    Foreground = ConsoleColor.White,
-                    Background = ConsoleColor.Red,
-                }.WriteLine();
+                    startDate = endDate = DateOnly.ParseExact(
+                        args[0],
+                        "dd.MM",
+                        CultureInfo.CurrentCulture,
+                        DateTimeStyles.AllowWhiteSpaces);
+                }
+                catch (Exception ex)
+                {
+                    new ConsoleString($"Parsing failed: {ex.Message}.")
+                            {Foreground = ConsoleColor.Red, Background = ConsoleColor.Black}
+                        .WriteLine();
+                }
+                break;
+            case 2 when args[1].ToLower() is not "yes" and not "no":
+                try
+                {
+                    startDate = DateOnly.ParseExact(
+                        args[0],
+                        "dd.MM",
+                        CultureInfo.CurrentCulture,
+                        DateTimeStyles.AllowWhiteSpaces);
+                    endDate = DateOnly.ParseExact(
+                        args[1],
+                        "dd.MM",
+                        CultureInfo.CurrentCulture,
+                        DateTimeStyles.AllowWhiteSpaces);
+                }
+                catch (Exception ex)
+                {
+                    new ConsoleString($"Parsing failed: {ex.Message}.")
+                            {Foreground = ConsoleColor.Red, Background = ConsoleColor.Black}
+                        .WriteLine();
+                }
+                break;
+            case 2:
+                try
+                {
+                    startDate = endDate = DateOnly.ParseExact(
+                        args[0],
+                        "dd.MM",
+                        CultureInfo.CurrentCulture,
+                        DateTimeStyles.AllowWhiteSpaces);
+                    writeLog = args[1].ToLower() switch
+                    {
+                        "y" => true,
+                        "yes" => true,
+                        "n" => false,
+                        "no" => false,
+                        _ => throw new FormatException("Expected either 'yes' or 'no'"),
+                    };
+                }
+                catch (Exception ex)
+                {
+                    new ConsoleString($"Parsing failed: {ex.Message}.")
+                            {Foreground = ConsoleColor.Red, Background = ConsoleColor.Black}
+                        .WriteLine();
+                }
+                break;
+            case 3:
+                try
+                {
+                    startDate = DateOnly.ParseExact(
+                        args[0],
+                        "dd.MM",
+                        CultureInfo.CurrentCulture,
+                        DateTimeStyles.AllowWhiteSpaces);
+                    endDate = DateOnly.ParseExact(
+                        args[1],
+                        "dd.MM",
+                        CultureInfo.CurrentCulture,
+                        DateTimeStyles.AllowWhiteSpaces);
+                    writeLog = args[2].ToLower() switch
+                    {
+                        "y" => true,
+                        "yes" => true,
+                        "n" => false,
+                        "no" => false,
+                        _ => throw new FormatException("Expected either 'yes' or 'no'"),
+                    };
+                }
+                catch (Exception ex)
+                {
+                    new ConsoleString($"Parsing failed: {ex.Message}.")
+                            {Foreground = ConsoleColor.Red, Background = ConsoleColor.Black}
+                        .WriteLine();
+                }
+                break;
+            default:
+                new ConsoleString("Insufficient args.")
+                    {Foreground = ConsoleColor.Red, Background = ConsoleColor.Black}
+                    .WriteLine();
+                return;
+        }
+
+        if (SapExporter.WriteLineByDefault(configHost) != writeLog)
+            SapExporter.WriteLineByDefault(configHost, writeLog);
+
+        var files = Directory.GetFiles(Workspace, "*.tlog", SearchOption.TopDirectoryOnly);
+        var logFiles = LoadLogFilesFromDisk(files);
+        var selectedLogFile = logFiles
+            .Where((q) => q.Date >= startDate)
+            .Where((q) => q.Date <= endDate)
+            .ToArray();
+        if (!selectedLogFile.Any())
+        {
+            new ConsoleString
+            {
+                Text = $"No log file found for date range {startDate} - {endDate}",
+                Foreground = ConsoleColor.Red,
+                Background = ConsoleColor.White,
+            }.WriteLine();
+            return;
+        }
+
+        if (writeLog)
+        {
+            var previousLine = GetLastLineOfToday(logFiles);
+            var dates = selectedLogFile
+                .Select((q) => q.Date)
+                .Select((q) => q.ToString("dd.MM"));
+            // ReSharper disable once StringLiteralTypo
+            quickTrackHost.TryAppendNewLogLine($"SAP-BBD: Zeiterfassung {string.Join(", ", dates)}");
+            new SapExporter(configHost, selectedLogFile)
+                .StartExport();
+            if (previousLine is not null)
+            {
+                quickTrackHost.TryAppendNewLogLine($"{previousLine.Project}:{previousLine.Message}");
             }
         }
+        else
+        {
+            new SapExporter(configHost, selectedLogFile)
+                .StartExport();
+        }
+        
+    }
+
+    private static TimeLogFile? GetLogFileOfToday(string[] files, out List<TimeLogFile> logFiles)
+    {
+        logFiles = LoadLogFilesFromDisk(files);
+        var todayLogFile = logFiles.FirstOrDefault((q) => q.Date == DateTime.Today.ToDateOnly());
+        if (todayLogFile is null)
+        {
+            new ConsoleString
+            {
+                Text = "No log file for today was located.",
+                Foreground = ConsoleColor.Red,
+                Background = ConsoleColor.Black,
+            }.WriteLine();
+            return todayLogFile;
+        }
+
+        return todayLogFile;
+    }
+
+    private static void RewordLogLineOf(TimeLogFile todayLogFile)
+    {
+
+        var timeLogLines = todayLogFile.GetLines().ToArray();
+        var timeLogLine = AskConsole.ForValueFromCollection(
+            timeLogLines,
+            tToString: (timeLogLine) => new ConsoleString
+            {
+                Text = timeLogLine.ToString(),
+                Foreground = ConsoleColor.DarkBlue,
+                Background = ConsoleColor.Gray,
+            },
+            invalidSelectionText: new ConsoleString
+            {
+                Text = "Invalid element. Please select one to continue",
+                Foreground = ConsoleColor.Red,
+                Background = ConsoleColor.Gray,
+            });
+
+        new ConsoleString
+        {
+            Text = "Selected ",
+            Foreground = ConsoleColor.Black,
+            Background = ConsoleColor.Gray,
+        }.Write();
+        new ConsoleString
+        {
+            Text = timeLogLine.ToString(),
+            Foreground = ConsoleColor.DarkBlue,
+            Background = ConsoleColor.Gray,
+        }.WriteLine();
+        new ConsoleString
+        {
+            Text = "Please enter the new non-empty Description:",
+            Foreground = ConsoleColor.Black,
+            Background = ConsoleColor.Gray,
+        }.WriteLine();
+        new ConsoleString
+        {
+            Text = "> ",
+            Foreground = ConsoleColor.Black,
+            Background = ConsoleColor.Gray,
+        }.Write();
+        var newDescription = Console.ReadLine()?.Trim();
+        if (newDescription.IsNullOrWhiteSpace())
+        {
+            new ConsoleString
+            {
+                Text = "Cannot change to empty description.",
+                Foreground = ConsoleColor.Red,
+                Background = ConsoleColor.Black,
+            }.WriteLine();
+            return;
+        }
+
+        todayLogFile.Clear();
+        foreach (var logLine in timeLogLines)
+        {
+            if (logLine == timeLogLine)
+                todayLogFile.Append(timeLogLine with
+                {
+                    Message = newDescription,
+                });
+            else
+                todayLogFile.Append(logLine);
+        }
+
+        return;
     }
 
     private static string GetPrettyPrintTag(TimeLogFile logFile)
@@ -381,7 +418,7 @@ public static class Programm
         return  $"[{logFile.Date:dd.MM}]{tag}";
     }
 
-    private static void PrintBreakMessage(DateTime from, DateTime to)
+    public static void PrintBreakMessage(DateTime from, DateTime to)
     {
         new ConsoleString(
             $"{from.ToLocalTime().ToTimeOnly()} to {to.ToLocalTime().ToTimeOnly()} -- BREAK MODE -- HIT ENTER TO CONTINUE")
@@ -444,6 +481,11 @@ public static class Programm
                        dateOnly));
     }
 
+    private static TimeLogLine? GetLastLineOfToday(List<TimeLogFile> logFiles)
+    {
+        var today = GetOfDate(logFiles, DateTime.Today.ToDateOnly());
+        return today.GetLines().LastOrDefault();
+    }
     private static bool RemoveLastLineOfToday(List<TimeLogFile> logFiles)
     {
         var today = GetOfDate(logFiles, DateTime.Today.ToDateOnly());
@@ -514,7 +556,7 @@ public static class Programm
         return lastLine;
     }
 
-    private static void Print(
+    public static void Print(
         TimeLogLine timeLogLine,
         string? prefix = null,
         ConsoleColor? foreground = null,

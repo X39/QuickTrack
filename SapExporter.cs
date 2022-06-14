@@ -9,9 +9,9 @@ namespace QuickTrack;
 public class SapExporter
 {
     private readonly TimeLogFile[] _logFiles;
-    private readonly string _mappingFile;
     private int _logDepth = 0;
     private Dictionary<TimeLogFile, TimeLogLine[]> _logLineCache = new();
+    private readonly ConfigHost _configHost;
 
     private enum ETimeout
     {
@@ -31,10 +31,10 @@ public class SapExporter
         };
     }
 
-    public SapExporter(string mappingFile, params TimeLogFile[] logFiles)
+    public SapExporter(ConfigHost configHost, params TimeLogFile[] logFiles)
     {
         _logFiles = logFiles;
-        _mappingFile = mappingFile;
+        _configHost = configHost;
     }
 
     private IDisposable LogScope()
@@ -189,31 +189,13 @@ public class SapExporter
 
     private Dictionary<string, (string Project, string Profession)> GetProjectToStringMap()
     {
-        LogDebug($"Loading projects from {_mappingFile}");
-        var dict = LoadProjectToStringMap();
-
+        var dict = new Dictionary<string, (string Project, string Profession)>();
         MapMissingProjects(dict);
-
-        SaveProjectToStringMap(dict);
-
         return dict;
     }
 
-    private void SaveProjectToStringMap(Dictionary<string, (string Project, string Profession)> projectToStringMap)
-    {
-        using var fileStream = new FileStream(
-            _mappingFile,
-            FileMode.Create,
-            FileAccess.Write,
-            FileShare.Read);
-        using var writer = new StreamWriter(fileStream);
-        foreach (var keyValuePair in projectToStringMap)
-        {
-            writer.WriteLine($"{keyValuePair.Key}={keyValuePair.Value.Project};{keyValuePair.Value.Profession}");
-        }
-    }
 
-
+    private record ProjectProfessionTuple(string Project, string Profession);
     private void MapMissingProjects(IDictionary<string, (string Project, string Profession)> projectToStringMap)
     {
         foreach (var timeLogLine in _logFiles.SelectMany((q) => q.GetLines()))
@@ -222,6 +204,15 @@ public class SapExporter
                 continue;
             if (timeLogLine.Project == "break")
                 continue;
+            var key = $"Mapping@{timeLogLine.Project}";
+            var value = _configHost.Get<ProjectProfessionTuple>(
+                typeof(SapExporter).FullName(),
+                key);
+            if (value is not null)
+            {
+                projectToStringMap[timeLogLine.Project] = (value.Project, value.Profession);
+                continue;
+            }
 
             askProjectCode:
             new ConsoleString
@@ -249,27 +240,11 @@ public class SapExporter
                 goto askProfessionCode;
 
             projectToStringMap[timeLogLine.Project.Trim()] = (project, line);
+            _configHost.Set(
+                typeof(SapExporter).FullName(),
+                key,
+                new ProjectProfessionTuple(project, line));
         }
-    }
-
-    private Dictionary<string, (string Project, string Profession)> LoadProjectToStringMap()
-    {
-        if (!File.Exists(_mappingFile))
-            return new Dictionary<string, (string Project, string Profession)>();
-        var mappingLines = File.ReadAllLines(_mappingFile);
-        var dict = new Dictionary<string, (string Project, string Profession)>();
-        foreach (var mappingLine in mappingLines)
-        {
-            var splatted = mappingLine.Split('=', ';');
-            var key = splatted.Skip(0).FirstOrDefault()?.Trim();
-            var project = splatted.Skip(1).FirstOrDefault()?.Trim();
-            var profession = splatted.Skip(2).FirstOrDefault()?.Trim();
-            if (key is null || project is null || profession is null)
-                continue;
-            dict[key] = (project, profession);
-        }
-
-        return dict;
     }
 
     private void MoveToNextDay()
@@ -689,4 +664,13 @@ public class SapExporter
     }
 
     #endregion
+
+    public static bool WriteLineByDefault(ConfigHost configHost)
+    {
+        return configHost.Get(typeof(SapExporter).FullName(), "write-line", true);
+    }
+    public static void WriteLineByDefault(ConfigHost configHost, bool value)
+    {
+        configHost.Set(typeof(SapExporter).FullName(), "write-line", value);
+    }
 }
