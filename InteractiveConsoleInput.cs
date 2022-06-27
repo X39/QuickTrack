@@ -228,7 +228,8 @@ public class InteractiveConsoleInput
                         Insert(ClipboardService.GetText() ?? string.Empty);
                         continue;
                     default:
-                        Insert(key.KeyChar.ToString());
+                        if (key.KeyChar is not '\0')
+                            Insert(key.KeyChar.ToString());
                         continue;
                 }
             }

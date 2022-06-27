@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using QuickTrack.Win32;
 using TextCopy;
 using X39.Util;
@@ -8,10 +9,10 @@ namespace QuickTrack;
 
 public class SapExporter
 {
-    private readonly TimeLogFile[] _logFiles;
-    private int _logDepth = 0;
-    private Dictionary<TimeLogFile, TimeLogLine[]> _logLineCache = new();
-    private readonly ConfigHost _configHost;
+    private readonly TimeLogFile[]                          _logFiles;
+    private          int                                    _logDepth     = 0;
+    private readonly Dictionary<TimeLogFile, TimeLogLine[]> _logLineCache = new();
+    private readonly ConfigHost                             _configHost;
 
     private enum ETimeout
     {
@@ -27,13 +28,13 @@ public class SapExporter
         {
             ETimeout.Safety => TimeSpan.FromMilliseconds(safetyTimeoutMs),
             ETimeout.Commit => TimeSpan.FromMilliseconds(confirmTimeoutMs),
-            _ => throw new ArgumentOutOfRangeException(nameof(timeout), timeout, null)
+            _               => throw new ArgumentOutOfRangeException(nameof(timeout), timeout, null)
         };
     }
 
     public SapExporter(ConfigHost configHost, params TimeLogFile[] logFiles)
     {
-        _logFiles = logFiles;
+        _logFiles   = logFiles;
         _configHost = configHost;
     }
 
@@ -48,25 +49,25 @@ public class SapExporter
     {
         new ConsoleString
         {
-            Text = string.Concat(new string(' ', _logDepth * 4), s),
+            Text       = string.Concat(new string(' ', _logDepth * 4), s),
             Foreground = ConsoleColor.Cyan,
             Background = ConsoleColor.Black,
         }.WriteLine();
     }
 
+    [Conditional("DEBUG")]
     private void LogDebug(string s)
     {
-#if DEBUG
         new ConsoleString
         {
             Text = string.Concat(new string(' ', _logDepth * 4), s),
             Foreground = ConsoleColor.Gray,
             Background = ConsoleColor.Black,
         }.WriteLine();
-#endif
     }
 
-    private void EnterProject(IReadOnlyDictionary<string, (string Project, string Profession)> projectToStringMap,
+    private void EnterProject(
+        IReadOnlyDictionary<string, (string Project, string Profession)> projectToStringMap,
         TimeLogLine timeLogLine)
     {
         var (project, _) = projectToStringMap[timeLogLine.Project.Trim()];
@@ -74,7 +75,8 @@ public class SapExporter
         EnterText(project);
     }
 
-    private void EnterProfession(IReadOnlyDictionary<string, (string Project, string Profession)> projectToStringMap,
+    private void EnterProfession(
+        IReadOnlyDictionary<string, (string Project, string Profession)> projectToStringMap,
         TimeLogLine timeLogLine)
     {
         var (_, profession) = projectToStringMap[timeLogLine.Project.Trim()];
@@ -196,6 +198,7 @@ public class SapExporter
 
 
     private record ProjectProfessionTuple(string Project, string Profession);
+
     private void MapMissingProjects(IDictionary<string, (string Project, string Profession)> projectToStringMap)
     {
         foreach (var timeLogLine in _logFiles.SelectMany((q) => q.GetLines()))
@@ -217,7 +220,7 @@ public class SapExporter
             askProjectCode:
             new ConsoleString
             {
-                Text = $"Please input the project code to use for '{timeLogLine.Project}':",
+                Text       = $"Please input the project code to use for '{timeLogLine.Project}':",
                 Foreground = ConsoleColor.Yellow,
                 Background = ConsoleColor.Black,
             }.Write();
@@ -440,7 +443,8 @@ public class SapExporter
             return logLines;
         var lines = logFile.GetLines().ToArray();
         var totalPause = lines.Aggregate(
-            TimeSpan.Zero, (l, r) => l + (r.Project == "break" ? r.TimeStampEnd - r.TimeStampStart : TimeSpan.Zero));
+            TimeSpan.Zero,
+            (l, r) => l + (r.Project == "break" ? r.TimeStampEnd - r.TimeStampStart : TimeSpan.Zero));
         if (totalPause >= TimeSpan.FromMinutes(30))
             return lines;
         var delta = TimeSpan.FromMinutes(30) - totalPause;
@@ -448,12 +452,14 @@ public class SapExporter
         Console.WriteLine($"Got {totalPause} of break time, expected at least {TimeSpan.FromMinutes(30)}.");
         Console.WriteLine($"Please choose where to append {delta} of mandatory break time.");
         Console.WriteLine($"Time will be appended AFTER the selected entry.");
-        var line = AskConsole.ForValueFromCollection(lines, (q) => new ConsoleString
-        {
-            Text = q.ToString(),
-            Foreground = ConsoleColor.White,
-            Background = ConsoleColor.Blue,
-        });
+        var line = AskConsole.ForValueFromCollection(
+            lines,
+            (q) => new ConsoleString
+            {
+                Text       = q.ToString(),
+                Foreground = ConsoleColor.White,
+                Background = ConsoleColor.Blue,
+            });
         if (forceTimeout)
             Timeout();
         var pre = lines.TakeWhile((q) => q != line);
@@ -461,11 +467,13 @@ public class SapExporter
         return _logLineCache[logFile] = pre
             .Append(line)
             .Append(new TimeLogLine(line.TimeStampEnd, line.TimeStampEnd + delta, "break", "pause"))
-            .Concat(end.Select((q) => q with
-            {
-                TimeStampStart = q.TimeStampStart + delta,
-                TimeStampEnd = q.TimeStampEnd == default ? default : q.TimeStampEnd + delta,
-            })).ToArray();
+            .Concat(
+                end.Select(
+                    (q) => q with
+                    {
+                        TimeStampStart = q.TimeStampStart + delta,
+                        TimeStampEnd = q.TimeStampEnd == default ? default : q.TimeStampEnd + delta,
+                    })).ToArray();
     }
 
 
@@ -669,6 +677,7 @@ public class SapExporter
     {
         return configHost.Get(typeof(SapExporter).FullName(), "write-line", true);
     }
+
     public static void WriteLineByDefault(ConfigHost configHost, bool value)
     {
         configHost.Set(typeof(SapExporter).FullName(), "write-line", value);

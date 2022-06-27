@@ -1,5 +1,6 @@
 using System.Collections.Immutable;
 using System.Globalization;
+using System.Reflection.Metadata.Ecma335;
 using System.Runtime.InteropServices;
 using QuickTrack.Win32;
 using X39.Util;
@@ -22,8 +23,7 @@ public static class Programm
             Foreground = ConsoleColor.DarkGray,
         }.WriteLine();
 
-        var files = Directory.GetFiles(Workspace, "*.tlog", SearchOption.TopDirectoryOnly);
-        var logFiles = LoadLogFilesFromDisk(files);
+        var logFiles = LoadLogFilesFromDisk();
 
         logFiles.Sort((l, r) => l.Date.CompareTo(r.Date));
         var undoQueue = new Stack<string>();
@@ -42,7 +42,7 @@ public static class Programm
         }
 
         var configHost = new ConfigHost(Workspace);
-        var quickTrackHost = new QuickTrackHost(Workspace, logFiles, lastMessage);
+        var quickTrackHost = new QuickTrackHost(Workspace, lastMessage);
         var commandParser = new CommandParser(new UnmatchedCommand(
             "project:message | message",
             "Appends a new line to the log. If project is omitted, the previous one will be used.",
@@ -51,18 +51,12 @@ public static class Programm
             new[] {"pause", "break"},
             "pause | break",
             "Starts a break and switches time-logging to the pause mode.",
-            (_) => quickTrackHost.StartBreak());
+            quickTrackHost.StartBreak);
         commandParser.RegisterCommand(
             new[] {"rewrite", "reword"},
             "rewrite | reword",
             "Allows to change the description from any time log line of today.",
-            (_) =>
-            {
-                var todayLogFile = GetLogFileOfToday(files, out logFiles);
-                if (todayLogFile is null)
-                    return;
-                RewordLogLineOf(todayLogFile);
-            });
+            RewordLogLineOfToday);
         commandParser.RegisterCommand(
             new[] {"quit", "end", "exit"},
             "quit | end | exit",
@@ -80,52 +74,14 @@ public static class Programm
             "If no argument is provided, only today and yesterday will be listed. " +
             "If week is provided, the previous 7 days will be listed. " +
             "If month is provided, the previous 31 days will be listed.",
-            (commandArgs) =>
-            {
-                var first = commandArgs.FirstOrDefault();
-                var days = first?.ToLower() switch
-                {
-                    "week" => 7,
-                    "month" => 31,
-                    _ => 0,
-                };
-                logFiles = LoadLogFilesFromDisk(files)
-                    .Where((q) => (DateTime.Today - q.Date.ToDateTime(TimeOnly.MinValue)).Days <= days)
-                    .OrderBy((q) => q.Date)
-                    .ToList();
-                foreach (var logFile in logFiles)
-                {
-                    var tag = GetPrettyPrintTag(logFile);
-                    PrintLogFile(logFile, tag);
-                }
-            });
+            ListCommand);
         commandParser.RegisterCommand(
             new[] {"undo"},
             "undo",
             "Lists the logged entries. " +
             "Removes the last log line of today. " +
             "If no more log lines are available for a day to be removed, nothing will be done.",
-            (_) =>
-            {
-                if (RemoveLastLineOfToday(logFiles))
-                {
-                    new ConsoleString(
-                        $"Undid last line.")
-                    {
-                        Foreground = ConsoleColor.White,
-                        Background = ConsoleColor.Green,
-                    }.WriteLine();
-                }
-                else
-                {
-                    new ConsoleString(
-                        $"No line found to undo.")
-                    {
-                        Foreground = ConsoleColor.White,
-                        Background = ConsoleColor.Red,
-                    }.WriteLine();
-                }
-            });
+            UndoCommand);
         commandParser.RegisterCommand(
             new[] {"sap"},
             () => $"sap FROM [ TO ] [ {(SapExporter.WriteLineByDefault(configHost) ? "no" : "NO")} | " +
@@ -140,6 +96,12 @@ public static class Programm
             "and is bound to the previous export action. " +
             "If TO is not provided, only the FROM day will be exported.",
             strings => SapCommand(configHost, quickTrackHost, strings));
+        commandParser.RegisterCommand(
+            new[] {"edit", "modify"},
+            () => "( edit | modify ) DATE { DATE }",
+            "Opens a log file in the text-editor of your choice. " +
+            "Dates are to be provided in the format DD.MM (eg. 21.02)",
+            EditCommand);
 
         while (!consoleCancellationTokenSource.IsCancellationRequested)
         {
@@ -159,6 +121,91 @@ public static class Programm
                         .WriteLine();
                 }
             }
+        }
+    }
+
+    private static void EditCommand(string[] obj)
+    {
+        var dates = new DateOnly[obj.Length];
+        var error = false;
+        for (var i = 0; i < obj.Length; i++)
+        {
+            var dateString = obj[i];
+            if (DateOnly.TryParseExact(
+                    dateString,
+                    "dd.MM",
+                    CultureInfo.CurrentCulture,
+                    DateTimeStyles.AllowWhiteSpaces,
+                    out var date))
+                dates[i] = date;
+            else
+            {
+                new ConsoleString($"Failed to parse date string '{dateString}'")
+                {
+                    Foreground = ConsoleColor.Red,
+                    Background = ConsoleColor.Black,
+                }.WriteLine();
+                error = true;
+            }
+        }
+
+        if (error)
+            return;
+
+        var logFiles = LoadLogFilesFromDisk();
+        foreach (var date in dates)
+        {
+            var logFile = GetOfDateOrNull(logFiles, date);
+            if (logFile is null)
+                new ConsoleString($"Log file for {date} could not be found.")
+                {
+                    Foreground = ConsoleColor.Red,
+                    Background = ConsoleColor.Black,
+                }.WriteLine();
+            else
+                logFile.OpenWithDefaultProgram();
+        }
+    }
+
+    private static void UndoCommand()
+    {
+        if (RemoveLastLineOfToday())
+        {
+            new ConsoleString(
+                $"Undid last line.")
+            {
+                Foreground = ConsoleColor.White,
+                Background = ConsoleColor.Green,
+            }.WriteLine();
+        }
+        else
+        {
+            new ConsoleString(
+                $"No line found to undo.")
+            {
+                Foreground = ConsoleColor.White,
+                Background = ConsoleColor.Red,
+            }.WriteLine();
+        }
+    }
+
+    private static void ListCommand(string[] commandArgs)
+    {
+        var first = commandArgs.FirstOrDefault();
+        var days = first?.ToLower() switch
+        {
+            "week" => 7,
+            "month" => 31,
+            _ => 0,
+        };
+        var logFiles = LoadLogFilesFromDisk()
+            .Where((q) => (DateTime.Today - q.Date.ToDateTime(TimeOnly.MinValue)).Days <= days)
+            .OrderBy((q) => q.Date)
+            .ToList();
+        foreach (var logFile in logFiles)
+        {
+            var tag = GetPrettyPrintTag(logFile);
+            PrintLogFile(logFile, tag);
         }
     }
 
@@ -184,6 +231,7 @@ public static class Programm
                             {Foreground = ConsoleColor.Red, Background = ConsoleColor.Black}
                         .WriteLine();
                 }
+
                 break;
             case 2 when args[1].ToLower() is not "yes" and not "no":
                 try
@@ -205,6 +253,7 @@ public static class Programm
                             {Foreground = ConsoleColor.Red, Background = ConsoleColor.Black}
                         .WriteLine();
                 }
+
                 break;
             case 2:
                 try
@@ -229,6 +278,7 @@ public static class Programm
                             {Foreground = ConsoleColor.Red, Background = ConsoleColor.Black}
                         .WriteLine();
                 }
+
                 break;
             case 3:
                 try
@@ -258,10 +308,11 @@ public static class Programm
                             {Foreground = ConsoleColor.Red, Background = ConsoleColor.Black}
                         .WriteLine();
                 }
+
                 break;
             default:
                 new ConsoleString("Insufficient args.")
-                    {Foreground = ConsoleColor.Red, Background = ConsoleColor.Black}
+                        {Foreground = ConsoleColor.Red, Background = ConsoleColor.Black}
                     .WriteLine();
                 return;
         }
@@ -306,10 +357,15 @@ public static class Programm
             new SapExporter(configHost, selectedLogFile)
                 .StartExport();
         }
-        
     }
 
-    private static TimeLogFile? GetLogFileOfToday(string[] files, out List<TimeLogFile> logFiles)
+    public static TimeLogFile? GetLogFileOfToday()
+        => GetLogFileOfToday(GetLogFiles(), out _);
+
+    public static TimeLogFile? GetLogFileOfToday(out List<TimeLogFile> logFiles)
+        => GetLogFileOfToday(GetLogFiles(), out logFiles);
+
+    public static TimeLogFile? GetLogFileOfToday(string[] files, out List<TimeLogFile> logFiles)
     {
         logFiles = LoadLogFilesFromDisk(files);
         var todayLogFile = logFiles.FirstOrDefault((q) => q.Date == DateTime.Today.ToDateOnly());
@@ -327,9 +383,16 @@ public static class Programm
         return todayLogFile;
     }
 
+    private static void RewordLogLineOfToday()
+    {
+        var todayLogFile = GetLogFileOfToday();
+        if (todayLogFile is null)
+            return;
+        RewordLogLineOf(todayLogFile);
+    }
+
     private static void RewordLogLineOf(TimeLogFile todayLogFile)
     {
-
         var timeLogLines = todayLogFile.GetLines().ToArray();
         var timeLogLine = AskConsole.ForValueFromCollection(
             timeLogLines,
@@ -415,7 +478,7 @@ public static class Programm
                 _ => throw new ArgumentOutOfRangeException(),
             },
         };
-        return  $"[{logFile.Date:dd.MM}]{tag}";
+        return $"[{logFile.Date:dd.MM}]{tag}";
     }
 
     public static void PrintBreakMessage(DateTime from, DateTime to)
@@ -428,7 +491,21 @@ public static class Programm
         }.WriteLine();
     }
 
-    private static List<TimeLogFile> LoadLogFilesFromDisk(string[] files)
+    public static string[] GetLogFiles()
+    {
+        var files = Directory.GetFiles(Workspace, "*", SearchOption.TopDirectoryOnly);
+        return files
+            .Where((file) => TimeLogFile.Extensions.Contains(Path.GetExtension(file)))
+            .ToArray();
+    }
+
+    public static List<TimeLogFile> LoadLogFilesFromDisk()
+    {
+        var files = GetLogFiles();
+        return LoadLogFilesFromDisk(files);
+    }
+
+    public static List<TimeLogFile> LoadLogFilesFromDisk(string[] files)
     {
         var logFiles = new List<TimeLogFile>();
         foreach (var file in files)
@@ -460,6 +537,7 @@ public static class Programm
     {
         return logFiles.FirstOrDefault((q) => q.Date == dateOnly);
     }
+
     private static TimeLogFile? GetOfDatePriorToOrNull(IEnumerable<TimeLogFile> logFiles, DateOnly dateOnly)
     {
         return logFiles.LastOrDefault((q) => q.Date < dateOnly);
@@ -467,26 +545,28 @@ public static class Programm
 
     private static TimeLogFile GetOfDate(ICollection<TimeLogFile> logFiles, DateOnly dateOnly)
     {
+        var filePath = Path.Combine(Workspace, DateTime.Today.ToString("yyyy-MM-dd"));
         return GetOfDateOrNull(logFiles, dateOnly)
-               ?? logFiles.AddAndReturn(
-                   new TimeLogFile(Path.Combine(Workspace, DateTime.Today.ToString("yyyy-MM-dd")),
-                       dateOnly));
+               ?? logFiles.AddAndReturn(new TimeLogFile(filePath, dateOnly));
     }
 
     private static TimeLogFile GetOfDatePriorTo(ICollection<TimeLogFile> logFiles, DateOnly dateOnly)
     {
+        var filePath = Path.Combine(Workspace, DateTime.Today.ToString("yyyy-MM-dd"));
         return GetOfDatePriorToOrNull(logFiles, dateOnly)
-               ?? logFiles.AddAndReturn(
-                   new TimeLogFile(Path.Combine(Workspace, DateTime.Today.ToString("yyyy-MM-dd")),
-                       dateOnly));
+               ?? logFiles.AddAndReturn(new TimeLogFile(filePath, dateOnly));
     }
 
-    private static TimeLogLine? GetLastLineOfToday(List<TimeLogFile> logFiles)
+    private static TimeLogLine? GetLastLineOfToday(ICollection<TimeLogFile> logFiles)
     {
         var today = GetOfDate(logFiles, DateTime.Today.ToDateOnly());
         return today.GetLines().LastOrDefault();
     }
-    private static bool RemoveLastLineOfToday(List<TimeLogFile> logFiles)
+
+    private static bool RemoveLastLineOfToday()
+        => RemoveLastLineOfToday(GetLogFileOfToday().MakeEnumerable().NotNull().ToList());
+
+    private static bool RemoveLastLineOfToday(ICollection<TimeLogFile> logFiles)
     {
         var today = GetOfDate(logFiles, DateTime.Today.ToDateOnly());
         var lines = File.Exists(today.FilePath)
@@ -526,7 +606,7 @@ public static class Programm
 
         return lastLine;
     }
-    
+
     private static TimeLogLine? PrintTodayLogFile(
         ICollection<TimeLogFile> logFiles,
         Stack<string> undoQueue)
@@ -546,6 +626,7 @@ public static class Programm
                 foregroundBreak: ConsoleColor.DarkGray);
             undoQueue.Push($"{timeLogLine.Project}: {timeLogLine.Message}");
         }
+
         foreach (var timeLogLine in lastLogFile.GetLines())
         {
             lastLine = timeLogLine;

@@ -1,17 +1,17 @@
 using Fastenshtein;
 using X39.Util;
 using X39.Util.Console;
+using QuickTrack.Commands;
 
 namespace QuickTrack;
 
-public record Command(string[] Keys, Func<string> Pattern, string Description, Action<string[]> Action);
 public record UnmatchedCommand(string Pattern, string Description, Func<string, bool> Action);
 
 public class CommandParser
 {
-    private readonly Dictionary<string, Command> _commandDictionary = new();
-    private readonly HashSet<Command> _commands = new();
-    private readonly UnmatchedCommand? _unmatchedCommand;
+    private readonly Dictionary<string, ICommand> _commandDictionary = new();
+    private readonly HashSet<ICommand>            _commands          = new();
+    private readonly UnmatchedCommand?            _unmatchedCommand;
 
     public CommandParser(UnmatchedCommand? unmatchedCommand)
     {
@@ -19,7 +19,7 @@ public class CommandParser
     }
 
 
-    public void RegisterCommand(Command command)
+    public void RegisterCommand(ICommand command)
     {
         if (_commands.Contains(command))
             throw new ArgumentException("Command was added already.");
@@ -41,17 +41,25 @@ public class CommandParser
     }
 
     public void RegisterCommand(string key, string pattern, string description, Action<string[]> action)
-        => RegisterCommand(new Command(key.MakeArray(), () => pattern, description, action));
+        => RegisterCommand(new FluentCommand(key.MakeArray(), () => pattern, description, action));
     public void RegisterCommand(string[] keys, string pattern, string description, Action<string[]> action)
-        => RegisterCommand(new Command(keys, () => pattern, description, action));
+        => RegisterCommand(new FluentCommand(keys, () => pattern, description, action));
     public void RegisterCommand(string key, Func<string> pattern, string description, Action<string[]> action)
-        => RegisterCommand(new Command(key.MakeArray(), pattern, description, action));
+        => RegisterCommand(new FluentCommand(key.MakeArray(), pattern, description, action));
     public void RegisterCommand(string[] keys, Func<string> pattern, string description, Action<string[]> action)
-        => RegisterCommand(new Command(keys, pattern, description, action));
+        => RegisterCommand(new FluentCommand(keys, pattern, description, action));
+    public void RegisterCommand(string key, string pattern, string description, Action action)
+        => RegisterCommand(new FluentCommand(key.MakeArray(), () => pattern, description, (_) => action()));
+    public void RegisterCommand(string[] keys, string pattern, string description, Action action)
+        => RegisterCommand(new FluentCommand(keys, () => pattern, description, (_) => action()));
+    public void RegisterCommand(string key, Func<string> pattern, string description, Action action)
+        => RegisterCommand(new FluentCommand(key.MakeArray(), pattern, description, (_) => action()));
+    public void RegisterCommand(string[] keys, Func<string> pattern, string description, Action action)
+        => RegisterCommand(new FluentCommand(keys, pattern, description, (_) => action()));
 
     public void PromptCommand(Stack<string> undoQueue, Stack<string> redoQueue, CancellationToken cancellationToken)
     {
-        var line = InteractiveConsoleInput.ReadLine(undoQueue, redoQueue, cancellationToken);
+        var line = InteractiveConsoleInput.ReadLine(undoQueue, redoQueue, cancellationToken).Trim();
         if (line.IsNullOrWhiteSpace())
         {
             _unmatchedCommand?.Action(string.Empty);
@@ -77,9 +85,9 @@ public class CommandParser
             DisplayHelp();
             return;
         }
-        if (_commandDictionary.TryGetValue(firstWord, out var command))
+        if (!bang &&_commandDictionary.TryGetValue(firstWord, out var command))
         {
-            command.Action(words.Skip(1).ToArray());
+            command.Execute(words.Skip(1).ToArray());
             return;
         }
         if (!bang && CouldBeMistake(firstWord))
@@ -122,7 +130,7 @@ public class CommandParser
                         "    ",
                         string.Join(
                             "\r\n    ",
-                            SplitAfterCharacters(command.Pattern(), 80))))
+                            SplitAfterCharacters(command.Pattern, 80))))
                     {Foreground = ConsoleColor.Green, Background = ConsoleColor.Black}
                 .WriteLine();
             new ConsoleString(string.Concat(

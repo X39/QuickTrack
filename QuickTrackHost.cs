@@ -7,14 +7,12 @@ namespace QuickTrack;
 public class QuickTrackHost
 {
     private TimeLogLine? _lastMessage;
-    private readonly List<TimeLogFile> _logFiles;
     private readonly string _workspace;
     private bool _isBreak;
 
-    public QuickTrackHost(string workspace, List<TimeLogFile> logFiles, TimeLogLine? lastTimeLogLine)
+    public QuickTrackHost(string workspace, TimeLogLine? lastTimeLogLine)
     {
         _workspace = workspace;
-        _logFiles = logFiles;
         _lastMessage = lastTimeLogLine;
     }
 
@@ -56,11 +54,17 @@ public class QuickTrackHost
             return false;
         var now = DateTime.Now.ToUniversalTime();
         var today = now.ToDateOnly();
-        var lastLogFile = _logFiles.FirstOrDefault((q) => q.Date == today)
-                          ?? _logFiles.AddAndReturn(
-                              new TimeLogFile(Path.Combine(_workspace, DateTime.Today.ToString("yyyy-MM-dd")),
-                                  today));
-        var tmp = new TimeLogLine(now, default, splatted[0].Trim(), string.Join(":", splatted.Skip(1)).Trim());
+        var lastLogFile = Programm.GetLogFileOfToday()
+                          ?? new TimeLogFile(
+                              Path.Combine(
+                                  _workspace,
+                                  DateTime.Today.ToString("yyyy-MM-dd")),
+                              today);
+        var tmp = new TimeLogLine(
+            now,
+            default,
+            splatted[0].Trim(),
+            string.Join(":", splatted.Skip(1)).Trim());
         lastLogFile.Append(tmp);
         if (_isBreak)
         {
