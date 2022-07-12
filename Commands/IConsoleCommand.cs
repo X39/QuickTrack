@@ -1,6 +1,6 @@
 namespace QuickTrack.Commands;
 
-public interface ICommand
+public interface IConsoleCommand
 {
     string[] Keys { get; }
     string Description { get; }

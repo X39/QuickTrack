@@ -1,8 +1,5 @@
-using System.Collections.Immutable;
 using System.Globalization;
-using System.Reflection.Metadata.Ecma335;
-using System.Runtime.InteropServices;
-using QuickTrack.Win32;
+using QuickTrack.Commands;
 using X39.Util;
 using X39.Util.Collections;
 using X39.Util.Console;
@@ -12,8 +9,8 @@ namespace QuickTrack;
 public static class Programm
 {
     public static string Workspace => Environment.CurrentDirectory;
-    public const string BreakTimeMessage = $"{BreakTimeMessageProject}:{BreakTimeMessageContent}";
-    public const string BreakTimeMessageProject = "break";
+    public const string BreakTimeMessage        = $"{BreakTimeMessageProject}:{BreakTimeMessageContent}";
+    public const string BreakTimeMessageProject = Constants.ProjectForBreak;
     public const string BreakTimeMessageContent = "start.";
 
     public static void Main(string[] args)
@@ -26,9 +23,8 @@ public static class Programm
         var logFiles = LoadLogFilesFromDisk();
 
         logFiles.Sort((l, r) => l.Date.CompareTo(r.Date));
-        var undoQueue = new Stack<string>();
-        var redoQueue = new Stack<string>();
-        var lastMessage = PrintTodayLogFile(logFiles, undoQueue);
+        var commandQueue = new Stack<string>();
+        var lastMessage = PrintTodayLogFile(logFiles, commandQueue);
         using var consoleCancellationTokenSource = new ConsoleCancellationTokenSource();
         if (lastMessage is not null && (IsBreakMessage(lastMessage)))
         {
@@ -41,14 +37,15 @@ public static class Programm
                     : now.AddMinutes(30 - minutesPassed));
         }
 
-        var configHost = new ConfigHost(Workspace);
+        var configHost = new ConfigHost(Path.Combine(Workspace, "config.cfg"));
         var quickTrackHost = new QuickTrackHost(Workspace, lastMessage);
-        var commandParser = new CommandParser(new UnmatchedCommand(
-            "project:message | message",
-            "Appends a new line to the log. If project is omitted, the previous one will be used.",
-            quickTrackHost.TryAppendNewLogLine));
+        var commandParser = new CommandParser(
+            new UnmatchedCommand(
+                "project:message | message",
+                "Appends a new line to the log. If project is omitted, the previous one will be used.",
+                quickTrackHost.TryAppendNewLogLine));
         commandParser.RegisterCommand(
-            new[] {"pause", "break"},
+            new[] {Constants.MessageForBreak, Constants.ProjectForBreak},
             "pause | break",
             "Starts a break and switches time-logging to the pause mode.",
             quickTrackHost.StartBreak);
@@ -96,18 +93,14 @@ public static class Programm
             "and is bound to the previous export action. " +
             "If TO is not provided, only the FROM day will be exported.",
             strings => SapCommand(configHost, quickTrackHost, strings));
-        commandParser.RegisterCommand(
-            new[] {"edit", "modify"},
-            () => "( edit | modify ) DATE { DATE }",
-            "Opens a log file in the text-editor of your choice. " +
-            "Dates are to be provided in the format DD.MM (eg. 21.02)",
-            EditCommand);
+        commandParser.RegisterCommand<EditCommand>();
+        commandParser.RegisterCommand<ExportCommand>();
 
         while (!consoleCancellationTokenSource.IsCancellationRequested)
         {
             try
             {
-                commandParser.PromptCommand(undoQueue, redoQueue, consoleCancellationTokenSource.Token);
+                commandParser.PromptCommand(commandQueue, consoleCancellationTokenSource.Token);
             }
             catch (Exception ex)
             {
@@ -121,49 +114,6 @@ public static class Programm
                         .WriteLine();
                 }
             }
-        }
-    }
-
-    private static void EditCommand(string[] obj)
-    {
-        var dates = new DateOnly[obj.Length];
-        var error = false;
-        for (var i = 0; i < obj.Length; i++)
-        {
-            var dateString = obj[i];
-            if (DateOnly.TryParseExact(
-                    dateString,
-                    "dd.MM",
-                    CultureInfo.CurrentCulture,
-                    DateTimeStyles.AllowWhiteSpaces,
-                    out var date))
-                dates[i] = date;
-            else
-            {
-                new ConsoleString($"Failed to parse date string '{dateString}'")
-                {
-                    Foreground = ConsoleColor.Red,
-                    Background = ConsoleColor.Black,
-                }.WriteLine();
-                error = true;
-            }
-        }
-
-        if (error)
-            return;
-
-        var logFiles = LoadLogFilesFromDisk();
-        foreach (var date in dates)
-        {
-            var logFile = GetOfDateOrNull(logFiles, date);
-            if (logFile is null)
-                new ConsoleString($"Log file for {date} could not be found.")
-                {
-                    Foreground = ConsoleColor.Red,
-                    Background = ConsoleColor.Black,
-                }.WriteLine();
-            else
-                logFile.OpenWithDefaultProgram();
         }
     }
 
@@ -194,9 +144,9 @@ public static class Programm
         var first = commandArgs.FirstOrDefault();
         var days = first?.ToLower() switch
         {
-            "week" => 7,
+            "week"  => 7,
             "month" => 31,
-            _ => 0,
+            _       => 0,
         };
         var logFiles = LoadLogFilesFromDisk()
             .Where((q) => (DateTime.Today - q.Date.ToDateTime(TimeOnly.MinValue)).Days <= days)
@@ -265,11 +215,11 @@ public static class Programm
                         DateTimeStyles.AllowWhiteSpaces);
                     writeLog = args[1].ToLower() switch
                     {
-                        "y" => true,
+                        "y"   => true,
                         "yes" => true,
-                        "n" => false,
-                        "no" => false,
-                        _ => throw new FormatException("Expected either 'yes' or 'no'"),
+                        "n"   => false,
+                        "no"  => false,
+                        _     => throw new FormatException("Expected either 'yes' or 'no'"),
                     };
                 }
                 catch (Exception ex)
@@ -295,11 +245,11 @@ public static class Programm
                         DateTimeStyles.AllowWhiteSpaces);
                     writeLog = args[2].ToLower() switch
                     {
-                        "y" => true,
+                        "y"   => true,
                         "yes" => true,
-                        "n" => false,
-                        "no" => false,
-                        _ => throw new FormatException("Expected either 'yes' or 'no'"),
+                        "n"   => false,
+                        "no"  => false,
+                        _     => throw new FormatException("Expected either 'yes' or 'no'"),
                     };
                 }
                 catch (Exception ex)
@@ -330,7 +280,7 @@ public static class Programm
         {
             new ConsoleString
             {
-                Text = $"No log file found for date range {startDate} - {endDate}",
+                Text       = $"No log file found for date range {startDate} - {endDate}",
                 Foreground = ConsoleColor.Red,
                 Background = ConsoleColor.White,
             }.WriteLine();
@@ -373,7 +323,7 @@ public static class Programm
         {
             new ConsoleString
             {
-                Text = "No log file for today was located.",
+                Text       = "No log file for today was located.",
                 Foreground = ConsoleColor.Red,
                 Background = ConsoleColor.Black,
             }.WriteLine();
@@ -398,38 +348,38 @@ public static class Programm
             timeLogLines,
             tToString: (timeLogLine) => new ConsoleString
             {
-                Text = timeLogLine.ToString(),
+                Text       = timeLogLine.ToString(),
                 Foreground = ConsoleColor.DarkBlue,
                 Background = ConsoleColor.Gray,
             },
             invalidSelectionText: new ConsoleString
             {
-                Text = "Invalid element. Please select one to continue",
+                Text       = "Invalid element. Please select one to continue",
                 Foreground = ConsoleColor.Red,
                 Background = ConsoleColor.Gray,
             });
 
         new ConsoleString
         {
-            Text = "Selected ",
+            Text       = "Selected ",
             Foreground = ConsoleColor.Black,
             Background = ConsoleColor.Gray,
         }.Write();
         new ConsoleString
         {
-            Text = timeLogLine.ToString(),
+            Text       = timeLogLine.ToString(),
             Foreground = ConsoleColor.DarkBlue,
             Background = ConsoleColor.Gray,
         }.WriteLine();
         new ConsoleString
         {
-            Text = "Please enter the new non-empty Description:",
+            Text       = "Please enter the new non-empty Description:",
             Foreground = ConsoleColor.Black,
             Background = ConsoleColor.Gray,
         }.WriteLine();
         new ConsoleString
         {
-            Text = "> ",
+            Text       = "> ",
             Foreground = ConsoleColor.Black,
             Background = ConsoleColor.Gray,
         }.Write();
@@ -438,7 +388,7 @@ public static class Programm
         {
             new ConsoleString
             {
-                Text = "Cannot change to empty description.",
+                Text       = "Cannot change to empty description.",
                 Foreground = ConsoleColor.Red,
                 Background = ConsoleColor.Black,
             }.WriteLine();
@@ -449,15 +399,14 @@ public static class Programm
         foreach (var logLine in timeLogLines)
         {
             if (logLine == timeLogLine)
-                todayLogFile.Append(timeLogLine with
-                {
-                    Message = newDescription,
-                });
+                todayLogFile.Append(
+                    timeLogLine with
+                    {
+                        Message = newDescription,
+                    });
             else
                 todayLogFile.Append(logLine);
         }
-
-        return;
     }
 
     private static string GetPrettyPrintTag(TimeLogFile logFile)
@@ -468,14 +417,14 @@ public static class Programm
             1 => "[YST]",
             _ => logFile.Date.DayOfWeek switch
             {
-                DayOfWeek.Monday => "[MON]",
-                DayOfWeek.Tuesday => "[TUE]",
+                DayOfWeek.Monday    => "[MON]",
+                DayOfWeek.Tuesday   => "[TUE]",
                 DayOfWeek.Wednesday => "[WED]",
-                DayOfWeek.Thursday => "[THU]",
-                DayOfWeek.Friday => "[FRI]",
-                DayOfWeek.Saturday => "[SAT]",
-                DayOfWeek.Sunday => "[SUN]",
-                _ => throw new ArgumentOutOfRangeException(),
+                DayOfWeek.Thursday  => "[THU]",
+                DayOfWeek.Friday    => "[FRI]",
+                DayOfWeek.Saturday  => "[SAT]",
+                DayOfWeek.Sunday    => "[SUN]",
+                _                   => throw new ArgumentOutOfRangeException(),
             },
         };
         return $"[{logFile.Date:dd.MM}]{tag}";
@@ -533,7 +482,7 @@ public static class Programm
         return logFiles;
     }
 
-    private static TimeLogFile? GetOfDateOrNull(IEnumerable<TimeLogFile> logFiles, DateOnly dateOnly)
+    public static TimeLogFile? GetOfDateOrNull(IEnumerable<TimeLogFile> logFiles, DateOnly dateOnly)
     {
         return logFiles.FirstOrDefault((q) => q.Date == dateOnly);
     }
@@ -594,7 +543,9 @@ public static class Programm
             lastLine = timeLogLine;
             if (prefix is not null)
             {
-                Print(timeLogLine, prefix,
+                Print(
+                    timeLogLine,
+                    prefix,
                     foreground: ConsoleColor.DarkYellow,
                     foregroundBreak: ConsoleColor.DarkGray);
             }
@@ -621,7 +572,9 @@ public static class Programm
         foreach (var timeLogLine in previousDayLogFile?.GetLines() ?? Enumerable.Empty<TimeLogLine>())
         {
             lastLine = timeLogLine;
-            Print(timeLogLine, GetPrettyPrintTag(previousDayLogFile!),
+            Print(
+                timeLogLine,
+                GetPrettyPrintTag(previousDayLogFile!),
                 foreground: ConsoleColor.DarkYellow,
                 foregroundBreak: ConsoleColor.DarkGray);
             undoQueue.Push($"{timeLogLine.Project}: {timeLogLine.Message}");

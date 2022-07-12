@@ -1,17 +1,34 @@
+using System.Diagnostics.CodeAnalysis;
+using System.Globalization;
+using X39.Util.Console;
+
 namespace QuickTrack.Exporters;
 
 public abstract class ExporterBase
 {
     /// <summary>
     /// The identifier of this exporter.
+    /// May not be equivalent to "help".
     /// </summary>
-    public abstract string Identifier { get; set; }
+    public abstract string Identifier { get; }
 
     /// <summary>
     /// The pattern (minus the export command and identifier),
     /// the arguments of this exporter expect.
     /// </summary>
-    public abstract string Pattern { get; set; }
+    [SuppressMessage("ReSharper", "StringLiteralTypo")]
+    public string Pattern => $"FROMDATE [ TODATE ] {ArgsPattern}";
+
+    /// <summary>
+    /// The pattern (minus the export command and identifier),
+    /// the arguments of this exporter expect.
+    /// </summary>
+    protected abstract string ArgsPattern { get; }
+    
+    /// <summary>
+    /// The text to return when help is requested.
+    /// </summary>
+    public abstract string HelpText { get; }
 
     /// <summary>
     /// Perform the actual export
@@ -20,7 +37,8 @@ public abstract class ExporterBase
     /// The log-files to be exported
     /// </param>
     /// <param name="args">
-    /// The arguments passed into the exporter
+    /// The arguments passed into the exporter.
+    /// Note: First argument may not be a date matching the pattern "dd.MM".
     /// </param>
     protected abstract void DoExport(IEnumerable<TimeLogFile> timeLogFiles, string[] args);
 
@@ -30,6 +48,58 @@ public abstract class ExporterBase
     /// <param name="args"></param>
     public void Export(string[] args)
     {
-        throw new NotImplementedException();
+        var argSkip = 0;
+        if (!DateOnly.TryParseExact(
+                args[0],
+                "dd.MM",
+                CultureInfo.CurrentCulture,
+                DateTimeStyles.AllowWhiteSpaces,
+                out var startDate))
+        {
+            new ConsoleString($"Failed to parse start-date {args[0]}.")
+                {
+                    Foreground = ConsoleColor.Red,
+                    Background = ConsoleColor.Black,
+                }
+                .WriteLine();
+            return;
+        }
+
+        argSkip++;
+        if (!DateOnly.TryParseExact(
+                args[1],
+                "dd.MM",
+                CultureInfo.CurrentCulture,
+                DateTimeStyles.AllowWhiteSpaces,
+                out var endDate))
+            endDate = startDate;
+        else
+            argSkip++;
+
+        var logFiles = Programm.LoadLogFilesFromDisk();
+        var selectedLogFiles = logFiles
+            .Where((q) => q.Date >= startDate)
+            .Where((q) => q.Date <= endDate)
+            .ToArray();
+        if (!selectedLogFiles.Any())
+        {
+            new ConsoleString
+            {
+                Text       = $"No log file found for date range {startDate} - {endDate}",
+                Foreground = ConsoleColor.Red,
+                Background = ConsoleColor.Black,
+            }.WriteLine();
+            return;
+        }
+
+        DoExport(selectedLogFiles, args.Skip(argSkip).ToArray());
     }
+
+    protected static string MakeOutputFolderPath(string outputFile)
+    {
+        Directory.CreateDirectory(Path.Combine(Programm.Workspace, OutputFolderName));
+        return Path.Combine(Programm.Workspace, OutputFolderName, outputFile);
+    }
+
+    private const string OutputFolderName = "out";
 }

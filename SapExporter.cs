@@ -45,6 +45,7 @@ public class SapExporter
             () => _logDepth--);
     }
 
+    [Conditional("DEBUG")]
     private void LogInfo(string s)
     {
         new ConsoleString
@@ -137,25 +138,22 @@ public class SapExporter
 
     public void StartExport()
     {
-        LogInfo("Preparation:");
-        LogInfo("    1. Open SAP BBD");
-        // ReSharper disable once StringLiteralTypo
-        LogInfo("    2. Navigate to \"Zeiterfassung\"");
-        LogInfo($"    3. Select the date {_logFiles.First().Date}");
-        // ReSharper disable once StringLiteralTypo
-        LogInfo("    4. DO NOT SORT! If you sorted, reopen the browser tab.");
-        LogInfo("    5. Create a new row");
-        // ReSharper disable once StringLiteralTypo
-        LogInfo("    6. Select the \"Aufgabe\" column");
-        LogInfo("Please hit any once done...");
-        Console.ReadKey(true);
-
         var projectToStringMap = GetProjectToStringMap();
 
         foreach (var logFile in _logFiles)
         {
             _ = GetLogLines(logFile, forceTimeout: false);
         }
+        
+        // ReSharper disable StringLiteralTypo
+        LogInfo($"Preparation:");
+        LogInfo($"    1. Open SAP BBD");
+        LogInfo($"    2. Navigate to \"Zeiterfassung\"");
+        LogInfo($"    3. Select the date {_logFiles.First().Date}");
+        LogInfo($"    4. Choose the day view");
+        LogInfo($"    5. Create a new row");
+        LogInfo($"    6. Select the \"Aufgabe\" column");
+        // ReSharper restore StringLiteralTypo
 
 
         Timeout();
@@ -205,7 +203,7 @@ public class SapExporter
         {
             if (projectToStringMap.ContainsKey(timeLogLine.Project.Trim()))
                 continue;
-            if (timeLogLine.Project == "break")
+            if (timeLogLine.Project == Constants.ProjectForBreak)
                 continue;
             var key = $"Mapping@{timeLogLine.Project}";
             var value = _configHost.Get<ProjectProfessionTuple>(
@@ -220,7 +218,7 @@ public class SapExporter
             askProjectCode:
             new ConsoleString
             {
-                Text       = $"Please input the project code to use for '{timeLogLine.Project}':",
+                Text       = $"Please input the project code to use for '{timeLogLine.Project}' (eg. IPRO43-4):",
                 Foreground = ConsoleColor.Yellow,
                 Background = ConsoleColor.Black,
             }.Write();
@@ -234,7 +232,7 @@ public class SapExporter
             new ConsoleString
             {
                 Text =
-                    $"Please input the profession code to use for '{timeLogLine.Project}' (numerical code preferred):",
+                    $"Please input the profession code to use for '{timeLogLine.Project}' (numerical code preferred; eg. 22):",
                 Foreground = ConsoleColor.Yellow,
                 Background = ConsoleColor.Black,
             }.Write();
@@ -311,7 +309,7 @@ public class SapExporter
             using var logLineScope = LogScope();
             if (value.TimeStampEnd == default)
                 break;
-            if (value.Project == "break")
+            if (value.Project == Constants.ProjectForBreak)
                 continue;
             if (index != 0)
             {
@@ -441,39 +439,7 @@ public class SapExporter
     {
         if (_logLineCache.TryGetValue(logFile, out var logLines))
             return logLines;
-        var lines = logFile.GetLines().ToArray();
-        var totalPause = lines.Aggregate(
-            TimeSpan.Zero,
-            (l, r) => l + (r.Project == "break" ? r.TimeStampEnd - r.TimeStampStart : TimeSpan.Zero));
-        if (totalPause >= TimeSpan.FromMinutes(30))
-            return lines;
-        var delta = TimeSpan.FromMinutes(30) - totalPause;
-        Console.WriteLine($"Missing mandatory break time on {logFile.Date.ToLongDateString()}.");
-        Console.WriteLine($"Got {totalPause} of break time, expected at least {TimeSpan.FromMinutes(30)}.");
-        Console.WriteLine($"Please choose where to append {delta} of mandatory break time.");
-        Console.WriteLine($"Time will be appended AFTER the selected entry.");
-        var line = AskConsole.ForValueFromCollection(
-            lines,
-            (q) => new ConsoleString
-            {
-                Text       = q.ToString(),
-                Foreground = ConsoleColor.White,
-                Background = ConsoleColor.Blue,
-            });
-        if (forceTimeout)
-            Timeout();
-        var pre = lines.TakeWhile((q) => q != line);
-        var end = lines.SkipWhile((q) => q != line && pre.Contains(q)).Skip(1);
-        return _logLineCache[logFile] = pre
-            .Append(line)
-            .Append(new TimeLogLine(line.TimeStampEnd, line.TimeStampEnd + delta, "break", "pause"))
-            .Concat(
-                end.Select(
-                    (q) => q with
-                    {
-                        TimeStampStart = q.TimeStampStart + delta,
-                        TimeStampEnd = q.TimeStampEnd == default ? default : q.TimeStampEnd + delta,
-                    })).ToArray();
+        return _logLineCache[logFile] = logFile.GetLinesWithMandatoryBreak();
     }
 
 

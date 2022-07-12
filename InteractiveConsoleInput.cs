@@ -102,15 +102,13 @@ public class InteractiveConsoleInput
 
         private readonly StringBuilder _builder;
         private readonly Cursor _cursor;
-        private readonly Stack<string> _undo;
-        private readonly Stack<string> _redo;
+        private readonly Stack<string> _history;
 
-        public InputLineHandler(Stack<string> undo, Stack<string> redo)
+        public InputLineHandler(Stack<string> history)
         {
             _builder = new StringBuilder();
             _cursor = new Cursor(_builder, true);
-            _undo = undo;
-            _redo = redo;
+            _history = history;
         }
 
         public int Length => _builder.Length;
@@ -149,6 +147,8 @@ public class InteractiveConsoleInput
 
         public string ReadLine(CancellationToken cancellationToken)
         {
+            var forwardHistory = new Stack<string>();
+            forwardHistory.Push(string.Empty);
             Console.Write(">");
 
             while (!cancellationToken.IsCancellationRequested)
@@ -159,7 +159,7 @@ public class InteractiveConsoleInput
                 {
                     case ConsoleKey.UpArrow:
                     {
-                        if (!_undo.Any())
+                        if (!_history.Any())
                         {
                             Console.Beep();
                             continue;
@@ -168,10 +168,10 @@ public class InteractiveConsoleInput
                         if (Length > 0)
                         {
                             _cursor.MoveTo(0);
-                            _redo.Push(_builder.ToString());
+                            forwardHistory.Push(_builder.ToString());
                         }
 
-                        var previous = _undo.Pop();
+                        var previous = _history.Pop();
                         var length = Length;
                         _builder.Clear();
                         _builder.Append(previous);
@@ -181,7 +181,7 @@ public class InteractiveConsoleInput
                     }
                     case ConsoleKey.DownArrow:
                     {
-                        if (!_redo.Any())
+                        if (!forwardHistory.Any())
                         {
                             Console.Beep();
                             continue;
@@ -190,10 +190,10 @@ public class InteractiveConsoleInput
                         if (Length > 0)
                         {
                             _cursor.MoveTo(0);
-                            _undo.Push(_builder.ToString());
+                            _history.Push(_builder.ToString());
                         }
 
-                        var next = _redo.Pop();
+                        var next = forwardHistory.Pop();
                         var length = Length;
                         _builder.Clear();
                         _builder.Append(next);
@@ -239,6 +239,11 @@ public class InteractiveConsoleInput
             Console.Write(new string('\b', str.Length + 1));
             Console.Write(new string(' ', str.Length + 1));
             Console.Write(new string('\b', str.Length + 1));
+
+            foreach (var s in forwardHistory)
+            {
+                _history.Push(s);
+            }
             return str;
         }
 
@@ -266,8 +271,8 @@ public class InteractiveConsoleInput
         }
     }
 
-    public static string ReadLine(Stack<string> undo, Stack<string> redo, CancellationToken cancellationToken)
+    public static string ReadLine(Stack<string> queue, CancellationToken cancellationToken)
     {
-        return new InputLineHandler(undo, redo).ReadLine(cancellationToken);
+        return new InputLineHandler(queue).ReadLine(cancellationToken);
     }
 }

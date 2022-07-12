@@ -5,15 +5,20 @@
         <TargetFramework>net6.0</TargetFramework>
         <ImplicitUsings>enable</ImplicitUsings>
         <Nullable>enable</Nullable>
-        <ApplicationIcon>icon.ico</ApplicationIcon>
         <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+        <ApplicationIcon>icon.ico</ApplicationIcon>
         <DebugType>embedded</DebugType>
         <PublishSingleFile>true</PublishSingleFile>
-        <RuntimeIdentifier>win-x64</RuntimeIdentifier>
         <Version>1.1.0.0</Version>
         <AssemblyVersion>1.1.0.0</AssemblyVersion>
         <FileVersion>1.1.0.0</FileVersion>
         <LangVersion>default</LangVersion>
+    </PropertyGroup>
+    
+    <PropertyGroup Condition="$(Configuration) == 'Release'">
+        <!-- Must be moved to here as rider does not like RuntimeIdentifiers to be specified when debugging -->
+        <!-- ToDo: Raise bug at JetBrains for this -->
+        <RuntimeIdentifier>win-x64</RuntimeIdentifier>
     </PropertyGroup>
 
     <ItemGroup>

@@ -5,12 +5,10 @@ using QuickTrack.Commands;
 
 namespace QuickTrack;
 
-public record UnmatchedCommand(string Pattern, string Description, Func<string, bool> Action);
-
 public class CommandParser
 {
-    private readonly Dictionary<string, ICommand> _commandDictionary = new();
-    private readonly HashSet<ICommand>            _commands          = new();
+    private readonly Dictionary<string, IConsoleCommand> _commandDictionary = new();
+    private readonly HashSet<IConsoleCommand>            _commands          = new();
     private readonly UnmatchedCommand?            _unmatchedCommand;
 
     public CommandParser(UnmatchedCommand? unmatchedCommand)
@@ -19,11 +17,14 @@ public class CommandParser
     }
 
 
-    public void RegisterCommand(ICommand command)
+    public void RegisterCommand<TCommand>()
+        where TCommand : IConsoleCommand, new()
+        => RegisterCommand(new TCommand());
+    public void RegisterCommand(IConsoleCommand consoleCommand)
     {
-        if (_commands.Contains(command))
+        if (_commands.Contains(consoleCommand))
             throw new ArgumentException("Command was added already.");
-        foreach (var key in command.Keys)
+        foreach (var key in consoleCommand.Keys)
         {
             if (_commandDictionary.ContainsKey(key.ToLower()))
                 throw new ArgumentException("A command with the same key exists.");
@@ -32,34 +33,35 @@ public class CommandParser
             if (key.ToLower() is "help" or "?")
                 throw new ArgumentException("Reserved command cannot be added.");
         }
-        foreach (var key in command.Keys)
+        foreach (var key in consoleCommand.Keys)
         {
-            _commandDictionary[key.ToLower()] = command;
+            _commandDictionary[key.ToLower()] = consoleCommand;
         }
 
-        _commands.Add(command);
+        _commands.Add(consoleCommand);
     }
 
     public void RegisterCommand(string key, string pattern, string description, Action<string[]> action)
-        => RegisterCommand(new FluentCommand(key.MakeArray(), () => pattern, description, action));
+        => RegisterCommand(new FluentConsoleCommand(key.MakeArray(), () => pattern, description, action));
     public void RegisterCommand(string[] keys, string pattern, string description, Action<string[]> action)
-        => RegisterCommand(new FluentCommand(keys, () => pattern, description, action));
+        => RegisterCommand(new FluentConsoleCommand(keys, () => pattern, description, action));
     public void RegisterCommand(string key, Func<string> pattern, string description, Action<string[]> action)
-        => RegisterCommand(new FluentCommand(key.MakeArray(), pattern, description, action));
+        => RegisterCommand(new FluentConsoleCommand(key.MakeArray(), pattern, description, action));
     public void RegisterCommand(string[] keys, Func<string> pattern, string description, Action<string[]> action)
-        => RegisterCommand(new FluentCommand(keys, pattern, description, action));
+        => RegisterCommand(new FluentConsoleCommand(keys, pattern, description, action));
     public void RegisterCommand(string key, string pattern, string description, Action action)
-        => RegisterCommand(new FluentCommand(key.MakeArray(), () => pattern, description, (_) => action()));
+        => RegisterCommand(new FluentConsoleCommand(key.MakeArray(), () => pattern, description, (_) => action()));
     public void RegisterCommand(string[] keys, string pattern, string description, Action action)
-        => RegisterCommand(new FluentCommand(keys, () => pattern, description, (_) => action()));
+        => RegisterCommand(new FluentConsoleCommand(keys, () => pattern, description, (_) => action()));
     public void RegisterCommand(string key, Func<string> pattern, string description, Action action)
-        => RegisterCommand(new FluentCommand(key.MakeArray(), pattern, description, (_) => action()));
+        => RegisterCommand(new FluentConsoleCommand(key.MakeArray(), pattern, description, (_) => action()));
     public void RegisterCommand(string[] keys, Func<string> pattern, string description, Action action)
-        => RegisterCommand(new FluentCommand(keys, pattern, description, (_) => action()));
+        => RegisterCommand(new FluentConsoleCommand(keys, pattern, description, (_) => action()));
 
-    public void PromptCommand(Stack<string> undoQueue, Stack<string> redoQueue, CancellationToken cancellationToken)
+    public void PromptCommand(Stack<string> historyStack, CancellationToken cancellationToken)
     {
-        var line = InteractiveConsoleInput.ReadLine(undoQueue, redoQueue, cancellationToken).Trim();
+        var line = InteractiveConsoleInput.ReadLine(historyStack, cancellationToken).Trim();
+        historyStack.Push(line);
         if (line.IsNullOrWhiteSpace())
         {
             _unmatchedCommand?.Action(string.Empty);
@@ -104,6 +106,9 @@ public class CommandParser
             .ToArray();
         if (!candidates.Any())
             return false;
+        new ConsoleString($"No command named '{firstWord}' was found.")
+                {Foreground = ConsoleColor.DarkYellow, Background = ConsoleColor.Black}
+            .WriteLine();
         new ConsoleString("Did you mean:")
                 {Foreground = ConsoleColor.DarkYellow, Background = ConsoleColor.Black}
             .WriteLine();
@@ -121,23 +126,33 @@ public class CommandParser
 
     private void DisplayHelp()
     {
+        string AsDescriptionString(string input)
+        {
+            return string.Concat(
+                "        ",
+                string.Join(
+                    "\r\n        ",
+                    SplitAfterCharacters(input.Replace("\r\n", "\r\n        "), 80)));
+        }
+
+        string AsPatternString(string input)
+        {
+            return string.Concat(
+                "    ",
+                string.Join(
+                    "\r\n        ",
+                    SplitAfterCharacters(input.Replace("\r\n", "\r\n    "), 80)));
+        }
+
         new ConsoleString("The following commands are available:")
                 {Foreground = ConsoleColor.Green, Background = ConsoleColor.Black}
             .WriteLine();
         foreach (var command in _commands)
         {
-            new ConsoleString(string.Concat(
-                        "    ",
-                        string.Join(
-                            "\r\n    ",
-                            SplitAfterCharacters(command.Pattern, 80))))
+            new ConsoleString(AsPatternString(command.Pattern))
                     {Foreground = ConsoleColor.Green, Background = ConsoleColor.Black}
                 .WriteLine();
-            new ConsoleString(string.Concat(
-                "        ",
-                string.Join(
-                    "\r\n        ",
-                    SplitAfterCharacters(command.Description, 80))))
+            new ConsoleString(AsDescriptionString(command.Description))
                     {Foreground = ConsoleColor.Green, Background = ConsoleColor.Black}
                 .WriteLine();
             Console.WriteLine();
@@ -148,18 +163,10 @@ public class CommandParser
             new ConsoleString("The following is done when nothing could be matched:")
                     {Foreground = ConsoleColor.Green, Background = ConsoleColor.Black}
                 .WriteLine();
-            new ConsoleString(string.Concat(
-                        "    ",
-                        string.Join(
-                            "\r\n    ",
-                            SplitAfterCharacters(_unmatchedCommand.Pattern, 80))))
+            new ConsoleString(AsPatternString(_unmatchedCommand.Pattern))
                     {Foreground = ConsoleColor.Green, Background = ConsoleColor.Black}
                 .WriteLine();
-            new ConsoleString(string.Concat(
-                        "        ",
-                        string.Join(
-                            "\r\n        ",
-                            SplitAfterCharacters(_unmatchedCommand.Description, 80))))
+            new ConsoleString(AsDescriptionString(_unmatchedCommand.Description))
                     {Foreground = ConsoleColor.Green, Background = ConsoleColor.Black}
                 .WriteLine();
             Console.WriteLine();
