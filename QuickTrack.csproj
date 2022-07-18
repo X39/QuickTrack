@@ -6,7 +6,7 @@
         <ImplicitUsings>enable</ImplicitUsings>
         <Nullable>enable</Nullable>
         <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
-        <ApplicationIcon>icon.ico</ApplicationIcon>
+        <ApplicationIcon>Resources/icon.ico</ApplicationIcon>
         <DebugType>embedded</DebugType>
         <PublishSingleFile>true</PublishSingleFile>
         <Version>1.1.0.0</Version>
@@ -24,7 +24,7 @@
     <ItemGroup>
       <PackageReference Include="Fastenshtein" Version="1.0.0.8" />
       <PackageReference Include="TextCopy" Version="6.1.0" />
-      <PackageReference Include="X39.Util" Version="1.0.0.25" />
+      <PackageReference Include="X39.Util" Version="1.0.0.27" />
     </ItemGroup>
 
     <ItemGroup>

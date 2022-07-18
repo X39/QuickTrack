@@ -63,23 +63,23 @@ public class ConfigHost
 
     [StackTraceHidden]
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private static void ValidateRealm(string realm)
+    private static void ValidateRealm(string? realm)
     {
         if (realm is not null && realm.IndexOfAny(new[] {'@', '='}) is not -1)
-            throw new ValidationException("Realm may not contain either '@' or '='.");
+            throw new ValidationException($"Realm may not contain either '@' or '='. Realm: {realm}");
     }
     [StackTraceHidden]
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static void ValidateKey(string key)
     {
-        if (key.IndexOfAny(new[] {'@', '='}) is not -1)
-            throw new ValidationException("Key may not contain either '@' or '='.");
+        if (key.IndexOfAny(new[] {'='}) is not -1)
+            throw new ValidationException($"Key may not contain '='. Key: {key}");
     }
     [StackTraceHidden]
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static string FileString(string? realm, string key, string value)
     {
-        ValidateRealm(key);
+        ValidateRealm(realm);
         ValidateKey(key);
         return realm is null ? $"{key}={value}" : $"{realm}@{key}={value}";
     }
@@ -128,9 +128,7 @@ public class ConfigHost
         @default ??= () => default;
         if (Values.TryGetValue((realm, key), out var value))
         {
-            Console.WriteLine(value);
             var result = System.Text.Json.JsonSerializer.Deserialize<T>(value);
-            Console.WriteLine(result?.ToString() ?? "null");
             return result;
         }
         else

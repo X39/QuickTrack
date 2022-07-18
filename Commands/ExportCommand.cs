@@ -10,20 +10,20 @@ public class ExportCommand : IConsoleCommand
 {
     private readonly ImmutableArray<ExporterBase> _exporters;
 
-    public ExportCommand()
+    public ExportCommand(ConfigHost configHost)
     {
         _exporters = typeof(ExportCommand).Assembly
             .GetTypes()
             .Where((type) => type.IsAssignableTo(typeof(ExporterBase)))
             .Where((type) => !type.IsEquivalentTo(typeof(ExporterBase)))
-            .Select((type) => type.CreateInstance<ExporterBase>())
+            .Select((type) => type.CreateInstance<ExporterBase>(configHost))
             .ToImmutableArray();
         Keys        = "export".MakeArray();
         Description = "Exports the data of the requested range to the given exporter.";
         Pattern = string.Join(
             "\r\n",
             _exporters
-                .Select((exporter) => $"export {exporter.Identifier} FROM TO {exporter.Pattern}")
+                .Select((exporter) => $"export {exporter.Identifier} {exporter.Pattern}")
                 .DefaultIfEmpty("No exporters are available")
                 .Prepend("export help EXPORTER"));
     }
@@ -47,6 +47,7 @@ public class ExportCommand : IConsoleCommand
             ShowHelp(args.Skip(1).ToArray());
             return;
         }
+
         if (exporter is null)
         {
             CouldBeMistake(identifier);
@@ -75,8 +76,10 @@ public class ExportCommand : IConsoleCommand
                     Background = ConsoleColor.Black,
                 }.WriteLine();
             }
+
             return;
         }
+
         var exporterIdentifier = args.First();
         var exporter = _exporters.FirstOrDefault(
             (q) => string.Equals(
@@ -89,6 +92,7 @@ public class ExportCommand : IConsoleCommand
             CouldBeMistake(exporterIdentifier);
             return;
         }
+
         new ConsoleString
         {
             Text       = exporter.HelpText,

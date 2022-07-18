@@ -18,6 +18,16 @@ public class EditCommand : IConsoleCommand
     {
         var dates = new DateOnly[args.Length];
         var error = false;
+        if (args.Length is 0)
+        {
+            new ConsoleString($"No date provided. Please provide a date in the format " +
+                              $"{Constants.DateFormatFormal} or {Constants.DateFormatNoDot}")
+            {
+                Foreground = ConsoleColor.Red,
+                Background = ConsoleColor.Black,
+            }.WriteLine();
+            return;
+        }
         for (var i = 0; i < args.Length; i++)
         {
             var dateString = args[i];

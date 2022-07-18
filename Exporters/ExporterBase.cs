@@ -17,7 +17,7 @@ public abstract class ExporterBase
     /// the arguments of this exporter expect.
     /// </summary>
     [SuppressMessage("ReSharper", "StringLiteralTypo")]
-    public string Pattern => $"FROMDATE [ TODATE ] {ArgsPattern}";
+    public string Pattern => $" FROM [ TO ] {ArgsPattern}";
 
     /// <summary>
     /// The pattern (minus the export command and identifier),
@@ -49,9 +49,19 @@ public abstract class ExporterBase
     public void Export(string[] args)
     {
         var argSkip = 0;
+        if (args.Length is 0)
+        {
+            new ConsoleString(HelpText)
+                {
+                    Foreground = ConsoleColor.Cyan,
+                    Background = ConsoleColor.Black,
+                }
+                .WriteLine();
+            return;
+        }
         if (!DateOnly.TryParseExact(
                 args[0],
-                "dd.MM",
+                new []{Constants.DateFormatFormal, Constants.DateFormatNoDot},
                 CultureInfo.CurrentCulture,
                 DateTimeStyles.AllowWhiteSpaces,
                 out var startDate))
@@ -66,9 +76,9 @@ public abstract class ExporterBase
         }
 
         argSkip++;
-        if (!DateOnly.TryParseExact(
+        if (args.Length < 2 || !DateOnly.TryParseExact(
                 args[1],
-                "dd.MM",
+                new []{Constants.DateFormatFormal, Constants.DateFormatNoDot},
                 CultureInfo.CurrentCulture,
                 DateTimeStyles.AllowWhiteSpaces,
                 out var endDate))
@@ -102,4 +112,11 @@ public abstract class ExporterBase
     }
 
     private const string OutputFolderName = "out";
+    
+    protected ConfigHost ConfigHost { get; }
+
+    protected ExporterBase(ConfigHost configHost)
+    {
+        ConfigHost = configHost;
+    }
 }

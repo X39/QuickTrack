@@ -186,4 +186,8 @@ public class TemplateExport : ExporterBase
         var configHost = new ConfigHost(transformFile);
         return configHost.Bind<Template>(null);
     }
+
+    public TemplateExport(ConfigHost configHost) : base(configHost)
+    {
+    }
 }

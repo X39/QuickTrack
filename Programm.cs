@@ -9,6 +9,8 @@ namespace QuickTrack;
 public static class Programm
 {
     public static string Workspace => Environment.CurrentDirectory;
+    public static QuickTrackHost Host { get; private set; } = null!;
+
     public const string BreakTimeMessage        = $"{BreakTimeMessageProject}:{BreakTimeMessageContent}";
     public const string BreakTimeMessageProject = Constants.ProjectForBreak;
     public const string BreakTimeMessageContent = "start.";
@@ -38,7 +40,7 @@ public static class Programm
         }
 
         var configHost = new ConfigHost(Path.Combine(Workspace, "config.cfg"));
-        var quickTrackHost = new QuickTrackHost(Workspace, lastMessage);
+        var quickTrackHost = Host = new QuickTrackHost(Workspace, lastMessage);
         var commandParser = new CommandParser(
             new UnmatchedCommand(
                 "project:message | message",
@@ -65,14 +67,6 @@ public static class Programm
                 consoleCancellationTokenSource.Cancel();
             });
         commandParser.RegisterCommand(
-            new[] {"list"},
-            "list [ week | month ]",
-            "Lists the logged entries. " +
-            "If no argument is provided, only today and yesterday will be listed. " +
-            "If week is provided, the previous 7 days will be listed. " +
-            "If month is provided, the previous 31 days will be listed.",
-            ListCommand);
-        commandParser.RegisterCommand(
             new[] {"undo"},
             "undo",
             "Lists the logged entries. " +
@@ -93,8 +87,10 @@ public static class Programm
             "and is bound to the previous export action. " +
             "If TO is not provided, only the FROM day will be exported.",
             strings => SapCommand(configHost, quickTrackHost, strings));
+        commandParser.RegisterCommand<ListCommand>();
+        commandParser.RegisterCommand<SearchCommand>();
         commandParser.RegisterCommand<EditCommand>();
-        commandParser.RegisterCommand<ExportCommand>();
+        commandParser.RegisterCommand(new ExportCommand(configHost));
 
         while (!consoleCancellationTokenSource.IsCancellationRequested)
         {
@@ -136,26 +132,6 @@ public static class Programm
                 Foreground = ConsoleColor.White,
                 Background = ConsoleColor.Red,
             }.WriteLine();
-        }
-    }
-
-    private static void ListCommand(string[] commandArgs)
-    {
-        var first = commandArgs.FirstOrDefault();
-        var days = first?.ToLower() switch
-        {
-            "week"  => 7,
-            "month" => 31,
-            _       => 0,
-        };
-        var logFiles = LoadLogFilesFromDisk()
-            .Where((q) => (DateTime.Today - q.Date.ToDateTime(TimeOnly.MinValue)).Days <= days)
-            .OrderBy((q) => q.Date)
-            .ToList();
-        foreach (var logFile in logFiles)
-        {
-            var tag = GetPrettyPrintTag(logFile);
-            PrintLogFile(logFile, tag);
         }
     }
 
@@ -409,7 +385,7 @@ public static class Programm
         }
     }
 
-    private static string GetPrettyPrintTag(TimeLogFile logFile)
+    public static string GetPrettyPrintTag(TimeLogFile logFile)
     {
         var tag = (DateTime.Today - logFile.Date.ToDateTime(TimeOnly.MinValue)).Days switch
         {
@@ -506,7 +482,7 @@ public static class Programm
                ?? logFiles.AddAndReturn(new TimeLogFile(filePath, dateOnly));
     }
 
-    private static TimeLogLine? GetLastLineOfToday(ICollection<TimeLogFile> logFiles)
+    public static TimeLogLine? GetLastLineOfToday(ICollection<TimeLogFile> logFiles)
     {
         var today = GetOfDate(logFiles, DateTime.Today.ToDateOnly());
         return today.GetLines().LastOrDefault();
@@ -533,7 +509,7 @@ public static class Programm
         return success;
     }
 
-    private static TimeLogLine? PrintLogFile(TimeLogFile logFile, string? prefix = null)
+    public static TimeLogLine? PrintLogFile(TimeLogFile logFile, string? prefix = null)
     {
         var now = DateTime.Now.ToUniversalTime();
         TimeLogLine? lastLine = null;

@@ -13,6 +13,7 @@ public class SapExporter
     private          int                                    _logDepth     = 0;
     private readonly Dictionary<TimeLogFile, TimeLogLine[]> _logLineCache = new();
     private readonly ConfigHost                             _configHost;
+    private readonly YieldHelperForMandatoryBreak           _timeLogLineYieldHelper;
 
     private enum ETimeout
     {
@@ -34,8 +35,9 @@ public class SapExporter
 
     public SapExporter(ConfigHost configHost, params TimeLogFile[] logFiles)
     {
-        _logFiles   = logFiles;
-        _configHost = configHost;
+        _logFiles               = logFiles;
+        _configHost             = configHost;
+        _timeLogLineYieldHelper = new YieldHelperForMandatoryBreak(configHost);
     }
 
     private IDisposable LogScope()
@@ -61,7 +63,7 @@ public class SapExporter
     {
         new ConsoleString
         {
-            Text = string.Concat(new string(' ', _logDepth * 4), s),
+            Text       = string.Concat(new string(' ', _logDepth * 4), s),
             Foreground = ConsoleColor.Gray,
             Background = ConsoleColor.Black,
         }.WriteLine();
@@ -138,13 +140,18 @@ public class SapExporter
 
     public void StartExport()
     {
+        new ConsoleString("WARNING: This command is obsolete. Please use `export sap` instead.")
+        {
+            Foreground= ConsoleColor.Black,
+            Background = ConsoleColor.DarkYellow
+        }.WriteLine();
         var projectToStringMap = GetProjectToStringMap();
 
         foreach (var logFile in _logFiles)
         {
             _ = GetLogLines(logFile, forceTimeout: false);
         }
-        
+
         // ReSharper disable StringLiteralTypo
         LogInfo($"Preparation:");
         LogInfo($"    1. Open SAP BBD");
@@ -439,7 +446,7 @@ public class SapExporter
     {
         if (_logLineCache.TryGetValue(logFile, out var logLines))
             return logLines;
-        return _logLineCache[logFile] = logFile.GetLinesWithMandatoryBreak();
+        return _logLineCache[logFile] = _timeLogLineYieldHelper.GetLinesWithMandatoryBreak(logFile);
     }
 
 
