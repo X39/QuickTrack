@@ -10,13 +10,13 @@ public class ExportCommand : IConsoleCommand
 {
     private readonly ImmutableArray<ExporterBase> _exporters;
 
-    public ExportCommand(ConfigHost configHost)
+    public ExportCommand()
     {
         _exporters = typeof(ExportCommand).Assembly
             .GetTypes()
             .Where((type) => type.IsAssignableTo(typeof(ExporterBase)))
             .Where((type) => !type.IsEquivalentTo(typeof(ExporterBase)))
-            .Select((type) => type.CreateInstance<ExporterBase>(configHost))
+            .Select((type) => type.CreateInstance<ExporterBase>())
             .ToImmutableArray();
         Keys        = "export".MakeArray();
         Description = "Exports the data of the requested range to the given exporter.";
@@ -32,7 +32,7 @@ public class ExportCommand : IConsoleCommand
     public string Description { get; }
     public string Pattern { get; }
 
-    public void Execute(string[] args)
+    public async ValueTask ExecuteAsync(ImmutableArray<string> args, CancellationToken cancellationToken)
     {
         if (args.Length is 0)
             throw new ArgumentException("args requires at least one argument");
@@ -54,7 +54,8 @@ public class ExportCommand : IConsoleCommand
             return;
         }
 
-        exporter.Export(args.Skip(1).ToArray());
+        await exporter.ExportAsync(args.Skip(1).ToArray(), cancellationToken)
+            .ConfigureAwait(false);
     }
 
     private void ShowHelp(string[] args)

@@ -6,11 +6,11 @@ Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "github", "github", "{39934A
 	ProjectSection(SolutionItems) = preProject
 		LICENSE = LICENSE
 		ReadMe.md = ReadMe.md
+		.github\demo.mp4 = .github\demo.mp4
 	EndProjectSection
 EndProject
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "workflows", "workflows", "{4778F7DD-6234-4C1C-8296-9C0198AF9DBB}"
 	ProjectSection(SolutionItems) = preProject
-		.github\workflows\demo.webm = .github\workflows\demo.webm
 		.github\workflows\main.yml = .github\workflows\main.yml
 	EndProjectSection
 EndProject

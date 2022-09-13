@@ -1,5 +1,7 @@
 using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
+using QuickTrack.Data.Database;
+using QuickTrack.Data.EntityFramework;
 using X39.Util.Console;
 
 namespace QuickTrack.Exporters;
@@ -33,20 +35,22 @@ public abstract class ExporterBase
     /// <summary>
     /// Perform the actual export
     /// </summary>
-    /// <param name="timeLogFiles">
-    /// The log-files to be exported
+    /// <param name="days">
+    /// The days to be exported
     /// </param>
     /// <param name="args">
     /// The arguments passed into the exporter.
     /// Note: First argument may not be a date matching the pattern "dd.MM".
     /// </param>
-    protected abstract void DoExport(IEnumerable<TimeLogFile> timeLogFiles, string[] args);
+    /// <param name="cancellationToken"></param>
+    protected abstract ValueTask DoExportAsync(IEnumerable<Day> days, string[] args, CancellationToken cancellationToken);
 
     /// <summary>
     /// Parses the from and to arguments and executes the exporter.
     /// </summary>
     /// <param name="args"></param>
-    public void Export(string[] args)
+    /// <param name="cancellationToken"></param>
+    public async Task ExportAsync(string[] args, CancellationToken cancellationToken)
     {
         var argSkip = 0;
         if (args.Length is 0)
@@ -86,12 +90,30 @@ public abstract class ExporterBase
         else
             argSkip++;
 
-        var logFiles = Programm.LoadLogFilesFromDisk();
-        var selectedLogFiles = logFiles
-            .Where((q) => q.Date >= startDate)
-            .Where((q) => q.Date <= endDate)
-            .ToArray();
-        if (!selectedLogFiles.Any())
+        if (endDate < startDate)
+        {
+            new ConsoleString
+            {
+                Text       = $"End date ({endDate}) is after start date ({startDate})",
+                Foreground = ConsoleColor.Red,
+                Background = ConsoleColor.Black,
+            }.WriteLine();
+            return;
+        }
+
+        var days = new List<Day>();
+        await foreach (var day in QtRepository.GetDays(cancellationToken)
+                           .WithCancellation(cancellationToken)
+                           .ConfigureAwait(false))
+        {
+            if (day.Date < startDate)
+                break;
+            if (day.Date > endDate)
+                continue;
+            days.Add(day);
+        }
+        days.Sort((l, r) => l.Date.ToDateOnly().CompareTo(r.Date.ToDateOnly()));
+        if (!days.Any())
         {
             new ConsoleString
             {
@@ -102,7 +124,8 @@ public abstract class ExporterBase
             return;
         }
 
-        DoExport(selectedLogFiles, args.Skip(argSkip).ToArray());
+        await DoExportAsync(days, args.Skip(argSkip).ToArray(), cancellationToken)
+            .ConfigureAwait(false);
     }
 
     protected static string MakeOutputFolderPath(string outputFile)
@@ -112,11 +135,4 @@ public abstract class ExporterBase
     }
 
     private const string OutputFolderName = "out";
-    
-    protected ConfigHost ConfigHost { get; }
-
-    protected ExporterBase(ConfigHost configHost)
-    {
-        ConfigHost = configHost;
-    }
 }

@@ -1,5 +1,5 @@
 using System.Collections.Immutable;
-using Fastenshtein;
+using QuickTrack.Data.EntityFramework;
 using X39.Util.Console;
 
 namespace QuickTrack.Commands;
@@ -19,7 +19,7 @@ public class SearchCommand : IConsoleCommand
     // ReSharper disable once StringLiteralTypo
     public string Pattern => "search ( NUMBEROFDAYS | week | month ) TEXT...";
 
-    public void Execute(string[] args)
+    public async ValueTask ExecuteAsync(ImmutableArray<string> args, CancellationToken cancellationToken)
     {
         if (args.Length < 2)
         {
@@ -40,28 +40,24 @@ public class SearchCommand : IConsoleCommand
             { } when first.All(char.IsDigit) => int.Parse(first),
             _                                => 1,
         } - 1;
-        var logFiles = Programm.LoadLogFilesFromDisk()
-            .Where((q) => days is int.MaxValue || (DateTime.Today - q.Date.ToDateTime(TimeOnly.MinValue)).Days <= days)
-            .OrderBy((q) => q.Date)
-            .ToList();
+
         var separators = new[] {' ', '[', ']', '|', ':'};
         var text = args
             .Skip(1)
             .SelectMany((arg) => arg.Split(separators, StringSplitOptions.RemoveEmptyEntries))
             .ToImmutableArray();
-        foreach (var logFile in logFiles)
+        await using var consoleStringFormatter = new ConsoleStringFormatter();
+        await foreach (var day in QtRepository.GetDays(cancellationToken)
+                           .WithCancellation(cancellationToken))
         {
-            foreach (var logLine in logFile.GetLines())
+            if (days-- <= 0)
+                return;
+            await foreach (var timeLog in day.GetTimeLogs(cancellationToken)
+                               .WithCancellation(cancellationToken))
             {
-                if (!MatchesByDistance(logLine.Project.Split(separators), text)
-                    && !MatchesByDistance(logLine.Message.Split(separators), text))
+                if (!MatchesByDistance(timeLog.Message.Split(separators), text))
                     continue;
-                var tag = Programm.GetPrettyPrintTag(logFile);
-                Programm.Print(
-                    logLine,
-                    tag,
-                    foreground: ConsoleColor.DarkYellow,
-                    foregroundBreak: ConsoleColor.DarkGray);
+                await timeLog.ToConsoleString(day, consoleStringFormatter, cancellationToken);
             }
         }
     }

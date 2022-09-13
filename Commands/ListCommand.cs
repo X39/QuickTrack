@@ -1,3 +1,7 @@
+using System.Collections.Immutable;
+using QuickTrack.Data.Database;
+using QuickTrack.Data.EntityFramework;
+
 namespace QuickTrack.Commands;
 
 public class ListCommand : IConsoleCommand
@@ -14,24 +18,38 @@ public class ListCommand : IConsoleCommand
     // ReSharper disable once StringLiteralTypo
     public string Pattern => "list [ NUMBEROFDAYS | week | month ]";
 
-    public void Execute(string[] args)
+    public async ValueTask ExecuteAsync(ImmutableArray<string> args, CancellationToken cancellationToken)
     {
         var first = args.FirstOrDefault()?.ToLower().Trim();
-        var days = first switch
+        var daysToPrint = first switch
         {
             "week"                           => 7,
             "month"                          => 31,
             { } when first.All(char.IsDigit) => int.Parse(first),
             _                                => 1,
-        } - 1;
-        var logFiles = Programm.LoadLogFilesFromDisk()
-            .Where((q) => (DateTime.Today - q.Date.ToDateTime(TimeOnly.MinValue)).Days <= days)
-            .OrderBy((q) => q.Date)
-            .ToList();
-        foreach (var logFile in logFiles)
+        };
+
+        await using var consoleStringFormatter = new ConsoleStringFormatter();
+        var days = new List<Day>();
+        await foreach (var day in QtRepository.GetDays(cancellationToken)
+                           .WithCancellation(cancellationToken)
+                           .ConfigureAwait(false))
         {
-            var tag = Programm.GetPrettyPrintTag(logFile);
-            Programm.PrintLogFile(logFile, tag);
+            if (daysToPrint-- <= 0)
+                break;
+            days.Add(day);
+        }
+
+        foreach (var day in days.OrderBy((q) => q.Date.ToDateOnly()))
+        {
+            await foreach (var log in day.GetTimeLogs(cancellationToken)
+                               .WithCancellation(cancellationToken)
+                               .ConfigureAwait(false))
+            {
+                var consoleString = await log.ToConsoleString(day, consoleStringFormatter, cancellationToken)
+                    .ConfigureAwait(false);
+                consoleString.WriteLine();
+            }
         }
     }
 }

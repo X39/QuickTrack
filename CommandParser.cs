@@ -1,3 +1,4 @@
+using System.Collections.Immutable;
 using Fastenshtein;
 using X39.Util;
 using X39.Util.Console;
@@ -9,7 +10,7 @@ public class CommandParser
 {
     private readonly Dictionary<string, IConsoleCommand> _commandDictionary = new();
     private readonly HashSet<IConsoleCommand>            _commands          = new();
-    private readonly UnmatchedCommand?            _unmatchedCommand;
+    private readonly UnmatchedCommand?                   _unmatchedCommand;
 
     public CommandParser(UnmatchedCommand? unmatchedCommand)
     {
@@ -20,6 +21,7 @@ public class CommandParser
     public void RegisterCommand<TCommand>()
         where TCommand : IConsoleCommand, new()
         => RegisterCommand(new TCommand());
+
     public void RegisterCommand(IConsoleCommand consoleCommand)
     {
         if (_commands.Contains(consoleCommand))
@@ -33,6 +35,7 @@ public class CommandParser
             if (key.ToLower() is "help" or "?")
                 throw new ArgumentException("Reserved command cannot be added.");
         }
+
         foreach (var key in consoleCommand.Keys)
         {
             _commandDictionary[key.ToLower()] = consoleCommand;
@@ -41,36 +44,130 @@ public class CommandParser
         _commands.Add(consoleCommand);
     }
 
-    public void RegisterCommand(string key, string pattern, string description, Action<string[]> action)
-        => RegisterCommand(new FluentConsoleCommand(key.MakeArray(), () => pattern, description, action));
-    public void RegisterCommand(string[] keys, string pattern, string description, Action<string[]> action)
-        => RegisterCommand(new FluentConsoleCommand(keys, () => pattern, description, action));
-    public void RegisterCommand(string key, Func<string> pattern, string description, Action<string[]> action)
-        => RegisterCommand(new FluentConsoleCommand(key.MakeArray(), pattern, description, action));
-    public void RegisterCommand(string[] keys, Func<string> pattern, string description, Action<string[]> action)
-        => RegisterCommand(new FluentConsoleCommand(keys, pattern, description, action));
-    public void RegisterCommand(string key, string pattern, string description, Action action)
-        => RegisterCommand(new FluentConsoleCommand(key.MakeArray(), () => pattern, description, (_) => action()));
-    public void RegisterCommand(string[] keys, string pattern, string description, Action action)
-        => RegisterCommand(new FluentConsoleCommand(keys, () => pattern, description, (_) => action()));
-    public void RegisterCommand(string key, Func<string> pattern, string description, Action action)
-        => RegisterCommand(new FluentConsoleCommand(key.MakeArray(), pattern, description, (_) => action()));
-    public void RegisterCommand(string[] keys, Func<string> pattern, string description, Action action)
-        => RegisterCommand(new FluentConsoleCommand(keys, pattern, description, (_) => action()));
+    public void RegisterCommand(string key, string pattern, string description, Action<ImmutableArray<string>> action)
+        => RegisterCommand(
+            new FluentConsoleCommand(
+                key.MakeArray(),
+                () => pattern,
+                description,
+                (args, tok) =>
+                {
+                    action(args);
+                    return ValueTask.CompletedTask;
+                }));
 
-    public void PromptCommand(Stack<string> historyStack, CancellationToken cancellationToken)
+    public void RegisterCommand(
+        string[] keys,
+        string pattern,
+        string description,
+        Action<ImmutableArray<string>> action)
+        => RegisterCommand(
+            new FluentConsoleCommand(
+                keys,
+                () => pattern,
+                description,
+                (args, tok) =>
+                {
+                    action(args);
+                    return ValueTask.CompletedTask;
+                }));
+
+    public void RegisterCommand(
+        string key,
+        Func<string> pattern,
+        string description,
+        Action<ImmutableArray<string>> action)
+        => RegisterCommand(
+            new FluentConsoleCommand(
+                key.MakeArray(),
+                pattern,
+                description,
+                (args, tok) =>
+                {
+                    action(args);
+                    return ValueTask.CompletedTask;
+                }));
+
+    public void RegisterCommand(
+        string[] keys,
+        Func<string> pattern,
+        string description,
+        Action<ImmutableArray<string>> action)
+        => RegisterCommand(
+            new FluentConsoleCommand(
+                keys,
+                pattern,
+                description,
+                (args, tok) =>
+                {
+                    action(args);
+                    return ValueTask.CompletedTask;
+                }));
+
+    public void RegisterCommand(string key, string pattern, string description, Action action)
+        => RegisterCommand(
+            new FluentConsoleCommand(
+                key.MakeArray(),
+                () => pattern,
+                description,
+                (args, tok) =>
+                {
+                    action();
+                    return ValueTask.CompletedTask;
+                }));
+
+    public void RegisterCommand(string[] keys, string pattern, string description, Action action)
+        => RegisterCommand(
+            new FluentConsoleCommand(
+                keys,
+                () => pattern,
+                description,
+                (args, tok) =>
+                {
+                    action();
+                    return ValueTask.CompletedTask;
+                }));
+
+    public void RegisterCommand(string key, Func<string> pattern, string description, Action action)
+        => RegisterCommand(
+            new FluentConsoleCommand(
+                key.MakeArray(),
+                pattern,
+                description,
+                (args, tok) =>
+                {
+                    action();
+                    return ValueTask.CompletedTask;
+                }));
+
+    public void RegisterCommand(string[] keys, Func<string> pattern, string description, Action action)
+        => RegisterCommand(
+            new FluentConsoleCommand(
+                keys,
+                pattern,
+                description,
+                (args, tok) =>
+                {
+                    action();
+                    return ValueTask.CompletedTask;
+                }));
+
+    public async Task PromptCommandAsync(Stack<string> historyStack, CancellationToken cancellationToken)
     {
         var line = InteractiveConsoleInput.ReadLine(historyStack, cancellationToken).Trim();
         historyStack.Push(line);
         if (line.IsNullOrWhiteSpace())
         {
-            _unmatchedCommand?.Action(string.Empty);
+            if (_unmatchedCommand is not null)
+                await _unmatchedCommand.Action(string.Empty, cancellationToken);
             return;
         }
+
         var words = SmartSplit(line);
         if (!words.Any())
         {
-            _unmatchedCommand?.Action(string.Empty);
+            if (_unmatchedCommand is not null)
+                await _unmatchedCommand.Action(string.Empty, cancellationToken);
             return;
         }
 
@@ -79,23 +176,27 @@ public class CommandParser
         if (firstWord.StartsWith("!"))
         {
             firstWord = firstWord[1..];
-            line = line[1..];
-            bang = true;
+            line      = line[1..];
+            bang      = true;
         }
+
         if (firstWord is "help" or "?")
         {
             DisplayHelp();
             return;
         }
-        if (!bang &&_commandDictionary.TryGetValue(firstWord, out var command))
+
+        if (!bang && _commandDictionary.TryGetValue(firstWord, out var command))
         {
-            command.Execute(words.Skip(1).ToArray());
+            await command.ExecuteAsync(words.Skip(1).ToImmutableArray(), cancellationToken);
             return;
         }
+
         if (!bang && CouldBeMistake(firstWord))
             return;
 
-        _unmatchedCommand?.Action(line);
+        if (_unmatchedCommand is not null)
+            await _unmatchedCommand.Action(line, cancellationToken);
     }
 
     private bool CouldBeMistake(string firstWord)
@@ -118,6 +219,7 @@ public class CommandParser
                     {Foreground = ConsoleColor.DarkYellow, Background = ConsoleColor.Black}
                 .WriteLine();
         }
+
         new ConsoleString("use bang (!) to suppress this")
                 {Foreground = ConsoleColor.DarkYellow, Background = ConsoleColor.Black}
             .WriteLine();
@@ -157,7 +259,7 @@ public class CommandParser
                 .WriteLine();
             Console.WriteLine();
         }
-        
+
         if (_unmatchedCommand is not null)
         {
             new ConsoleString("The following is done when nothing could be matched:")
@@ -192,7 +294,7 @@ public class CommandParser
             {
                 yield return input[start..i];
                 var skip = input.Skip(lastBreak).TakeWhile(char.IsWhiteSpace).Count();
-                start = i + skip;
+                start     = i + skip;
                 lastBreak = i + skip;
 
                 spacing = 0;
@@ -201,7 +303,7 @@ public class CommandParser
             {
                 yield return input[start..lastBreak];
                 var skip = input.Skip(lastBreak).TakeWhile(char.IsWhiteSpace).Count();
-                start = lastBreak + skip;
+                start   = lastBreak + skip;
                 spacing = (lastBreak - start) + skip;
             }
         }
@@ -234,19 +336,20 @@ public class CommandParser
                         yield return line[start..i];
                         start = i + 1;
                     }
-                    else switch (line[i])
-                    {
-                        case '\'':
-                            quoteUsed = '\'';
-                            quoted = true;
-                            start = i + 1;
-                            break;
-                        case '"':
-                            quoteUsed = '"';
-                            quoted = true;
-                            start = i + 1;
-                            break;
-                    }
+                    else
+                        switch (line[i])
+                        {
+                            case '\'':
+                                quoteUsed = '\'';
+                                quoted    = true;
+                                start     = i + 1;
+                                break;
+                            case '"':
+                                quoteUsed = '"';
+                                quoted    = true;
+                                start     = i + 1;
+                                break;
+                        }
                 }
             }
 

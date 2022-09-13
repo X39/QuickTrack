@@ -1,11 +1,19 @@
 using System.Globalization;
+using System.Net.Mime;
+using System.Text;
+using System.Text.Json;
+using Microsoft.EntityFrameworkCore;
 using QuickTrack.Commands;
+using QuickTrack.Data.Database;
+using QuickTrack.Data.EntityFramework;
+using QuickTrack.Exporters;
 using X39.Util;
 using X39.Util.Collections;
 using X39.Util.Console;
 
 namespace QuickTrack;
 
+// .\notepad++.exe -multiInst -notabbar -nosession .\shortcuts.xml
 public static class Programm
 {
     public static string Workspace => Environment.CurrentDirectory;
@@ -15,396 +23,46 @@ public static class Programm
     public const string BreakTimeMessageProject = Constants.ProjectForBreak;
     public const string BreakTimeMessageContent = "start.";
 
-    public static void Main(string[] args)
+    private static int                             ReturnCode = Constants.ErrorCodes.Ok;
+    private static ConsoleCancellationTokenSource? CancellationTokenSource;
+
+    public static void Quit(int returnCode = 0)
     {
-        new ConsoleString($"Working Directory: {Workspace}")
-        {
-            Foreground = ConsoleColor.DarkGray,
-        }.WriteLine();
-
-        var logFiles = LoadLogFilesFromDisk();
-
-        logFiles.Sort((l, r) => l.Date.CompareTo(r.Date));
-        var commandQueue = new Stack<string>();
-        var lastMessage = PrintTodayLogFile(logFiles, commandQueue);
-        using var consoleCancellationTokenSource = new ConsoleCancellationTokenSource();
-        if (lastMessage is not null && (IsBreakMessage(lastMessage)))
-        {
-            var now = DateTime.Now;
-            var minutesPassed = (now - lastMessage.TimeStampStart).TotalMinutes;
-            PrintBreakMessage(
-                lastMessage.TimeStampStart,
-                minutesPassed > 30
-                    ? now
-                    : now.AddMinutes(30 - minutesPassed));
-        }
-
-        var configHost = new ConfigHost(Path.Combine(Workspace, "config.cfg"));
-        var quickTrackHost = Host = new QuickTrackHost(Workspace, lastMessage);
-        var commandParser = new CommandParser(
-            new UnmatchedCommand(
-                "project:message | message",
-                "Appends a new line to the log. If project is omitted, the previous one will be used.",
-                quickTrackHost.TryAppendNewLogLine));
-        commandParser.RegisterCommand(
-            new[] {Constants.MessageForBreak, Constants.ProjectForBreak},
-            "pause | break",
-            "Starts a break and switches time-logging to the pause mode.",
-            quickTrackHost.StartBreak);
-        commandParser.RegisterCommand(
-            new[] {"rewrite", "reword"},
-            "rewrite | reword",
-            "Allows to change the description from any time log line of today.",
-            RewordLogLineOfToday);
-        commandParser.RegisterCommand(
-            new[] {"quit", "end", "exit"},
-            "quit | end | exit",
-            "Writes 'end of day' message and terminates the program.",
-            (_) =>
-            {
-                quickTrackHost.TryAppendNewLogLine("quit");
-                // ReSharper disable once AccessToDisposedClosure
-                consoleCancellationTokenSource.Cancel();
-            });
-        commandParser.RegisterCommand(
-            new[] {"undo"},
-            "undo",
-            "Lists the logged entries. " +
-            "Removes the last log line of today. " +
-            "If no more log lines are available for a day to be removed, nothing will be done.",
-            UndoCommand);
-        commandParser.RegisterCommand(
-            new[] {"sap"},
-            () => $"sap FROM [ TO ] [ {(SapExporter.WriteLineByDefault(configHost) ? "no" : "NO")} | " +
-                  $"{(SapExporter.WriteLineByDefault(configHost) ? "YES" : "yes")} ]",
-            "Exports the times to sap. " +
-            "FROM and TO are expected to be in the format DD.MM (eg. 13.06). " +
-            "FROM and TO are both inclusive. " +
-            "If the word 'no' is appended, no log line about the export will be written for today. " +
-            "If the word 'yes' is appended, a log line about the export will be written, denoting " +
-            "both the start and end of the actual export (and restoring the previous line). " +
-            $"The default value here is {(SapExporter.WriteLineByDefault(configHost) ? "yes" : "no")} " +
-            "and is bound to the previous export action. " +
-            "If TO is not provided, only the FROM day will be exported.",
-            strings => SapCommand(configHost, quickTrackHost, strings));
-        commandParser.RegisterCommand<ListCommand>();
-        commandParser.RegisterCommand<SearchCommand>();
-        commandParser.RegisterCommand<EditCommand>();
-        commandParser.RegisterCommand(new ExportCommand(configHost));
-
-        while (!consoleCancellationTokenSource.IsCancellationRequested)
-        {
-            try
-            {
-                commandParser.PromptCommand(commandQueue, consoleCancellationTokenSource.Token);
-            }
-            catch (Exception ex)
-            {
-                new ConsoleString(ex.Message)
-                        {Foreground = ConsoleColor.Red, Background = ConsoleColor.White}
-                    .WriteLine();
-                if (ex.StackTrace is not null)
-                {
-                    new ConsoleString(ex.StackTrace)
-                            {Foreground = ConsoleColor.Red, Background = ConsoleColor.White}
-                        .WriteLine();
-                }
-            }
-        }
+        ReturnCode = returnCode;
+        CancellationTokenSource?.Cancel();
     }
 
-    private static void UndoCommand()
+
+    public static async Task<int> Main(string[] args)
     {
-        if (RemoveLastLineOfToday())
+        await using var tokenSource = new ConsoleCancellationTokenSource();
+        CancellationTokenSource = tokenSource;
+        if (!await EnsureDatabaseCreatedOrReturnFalseToExit(CancellationTokenSource.Token))
+            return Constants.ErrorCodes.DatabaseFailedToCreate;
+
+        try
         {
-            new ConsoleString(
-                $"Undid last line.")
-            {
-                Foreground = ConsoleColor.White,
-                Background = ConsoleColor.Green,
-            }.WriteLine();
+            var startLocation = await Prompt.ForLocationIfMultipleAsync(CancellationTokenSource.Token);
+            var lastLineTuple = await PrintRecentAndGetLastLineWritten(CancellationTokenSource.Token);
+
+            var quickTrackHost = Host = new QuickTrackHost(Workspace, lastLineTuple, startLocation);
+            quickTrackHost.CommandParser.RegisterCommand<UndoCommand>();
+            quickTrackHost.CommandParser.RegisterCommand<ListCommand>();
+            quickTrackHost.CommandParser.RegisterCommand<SearchCommand>();
+            quickTrackHost.CommandParser.RegisterCommand<EditCommand>();
+            quickTrackHost.CommandParser.RegisterCommand<TotalCommand>();
+            quickTrackHost.CommandParser.RegisterCommand<ExportCommand>();
+
+            await quickTrackHost.RunAsync(CancellationTokenSource.Token);
         }
-        else
+        catch (OperationCanceledException)
         {
-            new ConsoleString(
-                $"No line found to undo.")
-            {
-                Foreground = ConsoleColor.White,
-                Background = ConsoleColor.Red,
-            }.WriteLine();
+            // empty
         }
+
+        return ReturnCode;
     }
 
-    private static void SapCommand(ConfigHost configHost, QuickTrackHost quickTrackHost, string[] args)
-    {
-        DateOnly startDate;
-        DateOnly endDate;
-        var writeLog = true;
-        switch (args.Length)
-        {
-            case 1:
-                try
-                {
-                    startDate = endDate = DateOnly.ParseExact(
-                        args[0],
-                        "dd.MM",
-                        CultureInfo.CurrentCulture,
-                        DateTimeStyles.AllowWhiteSpaces);
-                }
-                catch (Exception ex)
-                {
-                    new ConsoleString($"Parsing failed: {ex.Message}.")
-                            {Foreground = ConsoleColor.Red, Background = ConsoleColor.Black}
-                        .WriteLine();
-                }
-
-                break;
-            case 2 when args[1].ToLower() is not "yes" and not "no":
-                try
-                {
-                    startDate = DateOnly.ParseExact(
-                        args[0],
-                        "dd.MM",
-                        CultureInfo.CurrentCulture,
-                        DateTimeStyles.AllowWhiteSpaces);
-                    endDate = DateOnly.ParseExact(
-                        args[1],
-                        "dd.MM",
-                        CultureInfo.CurrentCulture,
-                        DateTimeStyles.AllowWhiteSpaces);
-                }
-                catch (Exception ex)
-                {
-                    new ConsoleString($"Parsing failed: {ex.Message}.")
-                            {Foreground = ConsoleColor.Red, Background = ConsoleColor.Black}
-                        .WriteLine();
-                }
-
-                break;
-            case 2:
-                try
-                {
-                    startDate = endDate = DateOnly.ParseExact(
-                        args[0],
-                        "dd.MM",
-                        CultureInfo.CurrentCulture,
-                        DateTimeStyles.AllowWhiteSpaces);
-                    writeLog = args[1].ToLower() switch
-                    {
-                        "y"   => true,
-                        "yes" => true,
-                        "n"   => false,
-                        "no"  => false,
-                        _     => throw new FormatException("Expected either 'yes' or 'no'"),
-                    };
-                }
-                catch (Exception ex)
-                {
-                    new ConsoleString($"Parsing failed: {ex.Message}.")
-                            {Foreground = ConsoleColor.Red, Background = ConsoleColor.Black}
-                        .WriteLine();
-                }
-
-                break;
-            case 3:
-                try
-                {
-                    startDate = DateOnly.ParseExact(
-                        args[0],
-                        "dd.MM",
-                        CultureInfo.CurrentCulture,
-                        DateTimeStyles.AllowWhiteSpaces);
-                    endDate = DateOnly.ParseExact(
-                        args[1],
-                        "dd.MM",
-                        CultureInfo.CurrentCulture,
-                        DateTimeStyles.AllowWhiteSpaces);
-                    writeLog = args[2].ToLower() switch
-                    {
-                        "y"   => true,
-                        "yes" => true,
-                        "n"   => false,
-                        "no"  => false,
-                        _     => throw new FormatException("Expected either 'yes' or 'no'"),
-                    };
-                }
-                catch (Exception ex)
-                {
-                    new ConsoleString($"Parsing failed: {ex.Message}.")
-                            {Foreground = ConsoleColor.Red, Background = ConsoleColor.Black}
-                        .WriteLine();
-                }
-
-                break;
-            default:
-                new ConsoleString("Insufficient args.")
-                        {Foreground = ConsoleColor.Red, Background = ConsoleColor.Black}
-                    .WriteLine();
-                return;
-        }
-
-        if (SapExporter.WriteLineByDefault(configHost) != writeLog)
-            SapExporter.WriteLineByDefault(configHost, writeLog);
-
-        var files = Directory.GetFiles(Workspace, "*.tlog", SearchOption.TopDirectoryOnly);
-        var logFiles = LoadLogFilesFromDisk(files);
-        var selectedLogFile = logFiles
-            .Where((q) => q.Date >= startDate)
-            .Where((q) => q.Date <= endDate)
-            .ToArray();
-        if (!selectedLogFile.Any())
-        {
-            new ConsoleString
-            {
-                Text       = $"No log file found for date range {startDate} - {endDate}",
-                Foreground = ConsoleColor.Red,
-                Background = ConsoleColor.White,
-            }.WriteLine();
-            return;
-        }
-
-        if (writeLog)
-        {
-            var previousLine = GetLastLineOfToday(logFiles);
-            var dates = selectedLogFile
-                .Select((q) => q.Date)
-                .Select((q) => q.ToString("dd.MM"));
-            // ReSharper disable once StringLiteralTypo
-            quickTrackHost.TryAppendNewLogLine($"SAP-BBD: Zeiterfassung {string.Join(", ", dates)}");
-            new SapExporter(configHost, selectedLogFile)
-                .StartExport();
-            if (previousLine is not null)
-            {
-                quickTrackHost.TryAppendNewLogLine($"{previousLine.Project}:{previousLine.Message}");
-            }
-        }
-        else
-        {
-            new SapExporter(configHost, selectedLogFile)
-                .StartExport();
-        }
-    }
-
-    public static TimeLogFile? GetLogFileOfToday()
-        => GetLogFileOfToday(GetLogFiles(), out _);
-
-    public static TimeLogFile? GetLogFileOfToday(out List<TimeLogFile> logFiles)
-        => GetLogFileOfToday(GetLogFiles(), out logFiles);
-
-    public static TimeLogFile? GetLogFileOfToday(string[] files, out List<TimeLogFile> logFiles)
-    {
-        logFiles = LoadLogFilesFromDisk(files);
-        var todayLogFile = logFiles.FirstOrDefault((q) => q.Date == DateTime.Today.ToDateOnly());
-        if (todayLogFile is null)
-        {
-            new ConsoleString
-            {
-                Text       = "No log file for today was located.",
-                Foreground = ConsoleColor.Red,
-                Background = ConsoleColor.Black,
-            }.WriteLine();
-            return todayLogFile;
-        }
-
-        return todayLogFile;
-    }
-
-    private static void RewordLogLineOfToday()
-    {
-        var todayLogFile = GetLogFileOfToday();
-        if (todayLogFile is null)
-            return;
-        RewordLogLineOf(todayLogFile);
-    }
-
-    private static void RewordLogLineOf(TimeLogFile todayLogFile)
-    {
-        var timeLogLines = todayLogFile.GetLines().ToArray();
-        var timeLogLine = AskConsole.ForValueFromCollection(
-            timeLogLines,
-            tToString: (timeLogLine) => new ConsoleString
-            {
-                Text       = timeLogLine.ToString(),
-                Foreground = ConsoleColor.DarkBlue,
-                Background = ConsoleColor.Gray,
-            },
-            invalidSelectionText: new ConsoleString
-            {
-                Text       = "Invalid element. Please select one to continue",
-                Foreground = ConsoleColor.Red,
-                Background = ConsoleColor.Gray,
-            });
-
-        new ConsoleString
-        {
-            Text       = "Selected ",
-            Foreground = ConsoleColor.Black,
-            Background = ConsoleColor.Gray,
-        }.Write();
-        new ConsoleString
-        {
-            Text       = timeLogLine.ToString(),
-            Foreground = ConsoleColor.DarkBlue,
-            Background = ConsoleColor.Gray,
-        }.WriteLine();
-        new ConsoleString
-        {
-            Text       = "Please enter the new non-empty Description:",
-            Foreground = ConsoleColor.Black,
-            Background = ConsoleColor.Gray,
-        }.WriteLine();
-        new ConsoleString
-        {
-            Text       = "> ",
-            Foreground = ConsoleColor.Black,
-            Background = ConsoleColor.Gray,
-        }.Write();
-        var newDescription = Console.ReadLine()?.Trim();
-        if (newDescription.IsNullOrWhiteSpace())
-        {
-            new ConsoleString
-            {
-                Text       = "Cannot change to empty description.",
-                Foreground = ConsoleColor.Red,
-                Background = ConsoleColor.Black,
-            }.WriteLine();
-            return;
-        }
-
-        todayLogFile.Clear();
-        foreach (var logLine in timeLogLines)
-        {
-            if (logLine == timeLogLine)
-                todayLogFile.Append(
-                    timeLogLine with
-                    {
-                        Message = newDescription,
-                    });
-            else
-                todayLogFile.Append(logLine);
-        }
-    }
-
-    public static string GetPrettyPrintTag(TimeLogFile logFile)
-    {
-        var tag = (DateTime.Today - logFile.Date.ToDateTime(TimeOnly.MinValue)).Days switch
-        {
-            0 => "[TOD]",
-            1 => "[YST]",
-            _ => logFile.Date.DayOfWeek switch
-            {
-                DayOfWeek.Monday    => "[MON]",
-                DayOfWeek.Tuesday   => "[TUE]",
-                DayOfWeek.Wednesday => "[WED]",
-                DayOfWeek.Thursday  => "[THU]",
-                DayOfWeek.Friday    => "[FRI]",
-                DayOfWeek.Saturday  => "[SAT]",
-                DayOfWeek.Sunday    => "[SUN]",
-                _                   => throw new ArgumentOutOfRangeException(),
-            },
-        };
-        return $"[{logFile.Date:dd.MM}]{tag}";
-    }
 
     public static void PrintBreakMessage(DateTime from, DateTime to)
     {
@@ -416,21 +74,41 @@ public static class Programm
         }.WriteLine();
     }
 
-    public static string[] GetLogFiles()
+    #region Obsolete
+
+    [Obsolete]
+    private static TimeLogFile? GetLogFileOfToday()
+        => GetLogFileOfToday(GetLogFiles(), out _);
+
+    [Obsolete]
+    private static TimeLogFile? GetLogFileOfToday(out List<TimeLogFile> logFiles)
+        => GetLogFileOfToday(GetLogFiles(), out logFiles);
+
+    [Obsolete]
+    private static TimeLogFile? GetLogFileOfToday(string[] files, out List<TimeLogFile> logFiles)
     {
-        var files = Directory.GetFiles(Workspace, "*", SearchOption.TopDirectoryOnly);
-        return files
-            .Where((file) => TimeLogFile.Extensions.Contains(Path.GetExtension(file)))
-            .ToArray();
+        logFiles = LoadLogFilesFromDisk(files);
+        var todayLogFile = logFiles.FirstOrDefault((q) => q.Date == DateTime.Today.ToDateOnly());
+        if (todayLogFile is not null)
+            return todayLogFile;
+        new ConsoleString
+        {
+            Text       = "No log file for today was located.",
+            Foreground = ConsoleColor.Red,
+            Background = ConsoleColor.Black,
+        }.WriteLine();
+        return todayLogFile;
     }
 
-    public static List<TimeLogFile> LoadLogFilesFromDisk()
+    [Obsolete("Obsolete")]
+    private static List<TimeLogFile> LoadLogFilesFromDisk()
     {
         var files = GetLogFiles();
         return LoadLogFilesFromDisk(files);
     }
 
-    public static List<TimeLogFile> LoadLogFilesFromDisk(string[] files)
+    [Obsolete("Obsolete")]
+    private static List<TimeLogFile> LoadLogFilesFromDisk(string[] files)
     {
         var logFiles = new List<TimeLogFile>();
         foreach (var file in files)
@@ -458,39 +136,62 @@ public static class Programm
         return logFiles;
     }
 
-    public static TimeLogFile? GetOfDateOrNull(IEnumerable<TimeLogFile> logFiles, DateOnly dateOnly)
+    [Obsolete]
+    private static TimeLogFile? GetOfDateOrNull(IEnumerable<TimeLogFile> logFiles, DateOnly dateOnly)
     {
         return logFiles.FirstOrDefault((q) => q.Date == dateOnly);
     }
 
+    [Obsolete]
     private static TimeLogFile? GetOfDatePriorToOrNull(IEnumerable<TimeLogFile> logFiles, DateOnly dateOnly)
     {
         return logFiles.LastOrDefault((q) => q.Date < dateOnly);
     }
 
+    [Obsolete]
     private static TimeLogFile GetOfDate(ICollection<TimeLogFile> logFiles, DateOnly dateOnly)
     {
         var filePath = Path.Combine(Workspace, DateTime.Today.ToString("yyyy-MM-dd"));
-        return GetOfDateOrNull(logFiles, dateOnly)
-               ?? logFiles.AddAndReturn(new TimeLogFile(filePath, dateOnly));
+        if (logFiles.IsReadOnly)
+        {
+            return GetOfDateOrNull(logFiles, dateOnly)
+                   ?? new TimeLogFile(filePath, dateOnly);
+        }
+        else
+        {
+            return GetOfDateOrNull(logFiles, dateOnly)
+                   ?? logFiles.AddAndReturn(new TimeLogFile(filePath, dateOnly));
+        }
     }
 
+    [Obsolete]
     private static TimeLogFile GetOfDatePriorTo(ICollection<TimeLogFile> logFiles, DateOnly dateOnly)
     {
         var filePath = Path.Combine(Workspace, DateTime.Today.ToString("yyyy-MM-dd"));
-        return GetOfDatePriorToOrNull(logFiles, dateOnly)
-               ?? logFiles.AddAndReturn(new TimeLogFile(filePath, dateOnly));
+        if (logFiles.IsReadOnly)
+        {
+            return GetOfDatePriorToOrNull(logFiles, dateOnly)
+                   ?? new TimeLogFile(filePath, dateOnly);
+        }
+        else
+        {
+            return GetOfDatePriorToOrNull(logFiles, dateOnly)
+                   ?? logFiles.AddAndReturn(new TimeLogFile(filePath, dateOnly));
+        }
     }
 
-    public static TimeLogLine? GetLastLineOfToday(ICollection<TimeLogFile> logFiles)
+    [Obsolete]
+    private static TimeLogLine? GetLastLineOfToday(ICollection<TimeLogFile> logFiles)
     {
         var today = GetOfDate(logFiles, DateTime.Today.ToDateOnly());
         return today.GetLines().LastOrDefault();
     }
 
+    [Obsolete]
     private static bool RemoveLastLineOfToday()
         => RemoveLastLineOfToday(GetLogFileOfToday().MakeEnumerable().NotNull().ToList());
 
+    [Obsolete]
     private static bool RemoveLastLineOfToday(ICollection<TimeLogFile> logFiles)
     {
         var today = GetOfDate(logFiles, DateTime.Today.ToDateOnly());
@@ -509,7 +210,8 @@ public static class Programm
         return success;
     }
 
-    public static TimeLogLine? PrintLogFile(TimeLogFile logFile, string? prefix = null)
+    [Obsolete]
+    private static TimeLogLine? PrintLogFile(TimeLogFile logFile, string? prefix = null)
     {
         var now = DateTime.Now.ToUniversalTime();
         TimeLogLine? lastLine = null;
@@ -534,39 +236,8 @@ public static class Programm
         return lastLine;
     }
 
-    private static TimeLogLine? PrintTodayLogFile(
-        ICollection<TimeLogFile> logFiles,
-        Stack<string> undoQueue)
-    {
-        var now = DateTime.Now.ToUniversalTime();
-        var today = now.ToDateOnly();
-        var previousDayLogFile = GetOfDatePriorToOrNull(logFiles, today);
-        var lastLogFile = GetOfDate(logFiles, today);
-        TimeLogLine? lastLine = null;
-
-        undoQueue.Clear();
-        foreach (var timeLogLine in previousDayLogFile?.GetLines() ?? Enumerable.Empty<TimeLogLine>())
-        {
-            lastLine = timeLogLine;
-            Print(
-                timeLogLine,
-                GetPrettyPrintTag(previousDayLogFile!),
-                foreground: ConsoleColor.DarkYellow,
-                foregroundBreak: ConsoleColor.DarkGray);
-            undoQueue.Push($"{timeLogLine.Project}: {timeLogLine.Message}");
-        }
-
-        foreach (var timeLogLine in lastLogFile.GetLines())
-        {
-            lastLine = timeLogLine;
-            Print(timeLogLine);
-            undoQueue.Push($"{timeLogLine.Project}: {timeLogLine.Message}");
-        }
-
-        return lastLine;
-    }
-
-    public static void Print(
+    [Obsolete]
+    private static void Print(
         TimeLogLine timeLogLine,
         string? prefix = null,
         ConsoleColor? foreground = null,
@@ -585,9 +256,197 @@ public static class Programm
         }.WriteLine();
     }
 
+    [Obsolete]
     private static bool IsBreakMessage(TimeLogLine timeLogLine)
     {
         return timeLogLine.Project == BreakTimeMessageProject &&
                timeLogLine.Message == BreakTimeMessageContent;
+    }
+
+    [Obsolete]
+    private static string[] GetLogFiles()
+    {
+        var files = Directory.GetFiles(Workspace, "*", SearchOption.TopDirectoryOnly);
+        return files
+            .Where((file) => TimeLogFile.Extensions.Contains(Path.GetExtension(file)))
+            .ToArray();
+    }
+
+    #endregion
+
+    /// <summary>
+    ///     Prints the log file of today plus the previous <see cref="Day"/> logged
+    ///     and returns the last <see cref="TimeLog"/> logged.
+    /// </summary>
+    /// <param name="cancellationToken">
+    ///     A <see cref="CancellationToken"/> to cancel the operation at any point in time.
+    /// </param>
+    /// <returns>
+    ///     The last <see cref="TimeLog"/> that was logged
+    ///     or <see langword="null"/> if no such <see cref="TimeLog"/> exists.
+    /// </returns>
+    private static async Task<(Project Project, TimeLog TimeLog)?> PrintRecentAndGetLastLineWritten(
+        CancellationToken cancellationToken)
+    {
+        var today = await QtRepository.GetTodayAsync(null, cancellationToken);
+        var yesterday = await today.GetRelativeDayAsync(-1, cancellationToken);
+
+        var logLines = today.GetTimeLogs(cancellationToken);
+        await using var consoleStringFormatter = new ConsoleStringFormatter();
+
+        TimeLog? lastLine = null;
+        if (yesterday is not null)
+        {
+            await foreach (var timeLog in yesterday.GetTimeLogs(cancellationToken))
+            {
+                lastLine = timeLog;
+                var consoleString = await timeLog.ToConsoleString(yesterday, consoleStringFormatter, cancellationToken);
+                consoleString.WriteLine();
+            }
+        }
+
+        await foreach (var timeLog in today.GetTimeLogs(cancellationToken))
+        {
+            lastLine = timeLog;
+            var consoleString = await timeLog.ToConsoleString(today, consoleStringFormatter, cancellationToken);
+            consoleString.WriteLine();
+        }
+
+        if (lastLine is null)
+            return null;
+
+        return (await consoleStringFormatter.GetProjectAsync(lastLine.ProjectFk, cancellationToken), lastLine);
+    }
+
+    private static async Task<bool> EnsureDatabaseCreatedOrReturnFalseToExit(CancellationToken cancellationToken)
+    {
+        new ConsoleString($"Working Directory: {Workspace}")
+        {
+            Foreground = ConsoleColor.DarkGray,
+        }.WriteLine();
+        var databaseFile = Path.GetFullPath(Constants.DatabaseFile);
+        if (File.Exists(databaseFile))
+        {
+            await using var dbContext = new QtContext();
+            await dbContext.Database.MigrateAsync(cancellationToken);
+            return true;
+        }
+        else
+        {
+            ConsoleKeyInfo answer;
+            do
+            {
+                new ConsoleString($"No database found at {databaseFile}. Do you want to create it now? (y/n)")
+                {
+                    Foreground = ConsoleColor.Cyan,
+                    Background = ConsoleColor.Black,
+                }.WriteLine();
+                answer = Console.ReadKey(true);
+            } while (answer.Key != ConsoleKey.Y && answer.Key != ConsoleKey.N);
+
+            if (answer.Key is ConsoleKey.N)
+                return false;
+
+            await using var dbContext = new QtContext();
+            await dbContext.Database.MigrateAsync(cancellationToken);
+            await new Migrator().MigrateFromFlatFileAsync();
+
+            return true;
+        }
+    }
+
+    private class Migrator
+    {
+        /// <summary>
+        /// Temporary method to migrate to the new db-driven format.
+        /// </summary>
+        public async Task MigrateFromFlatFileAsync()
+        {
+#pragma warning disable CS0618
+#pragma warning disable CS0612
+            var configHost = new ConfigHost(Path.Combine(Workspace, "config.cfg"));
+            var existingLogFiles = LoadLogFilesFromDisk();
+#pragma warning restore CS0612
+#pragma warning restore CS0618
+            await using var dbContext = new QtContext();
+            await dbContext.Database.EnsureDeletedAsync();
+            await dbContext.Database.MigrateAsync();
+            var location = new Location
+            {
+                Title            = "Unknown",
+                TimeStampCreated = DateTime.Now,
+            };
+            dbContext.Locations.Add(location);
+            await dbContext.SaveChangesAsync();
+            foreach (var existingLogFile in existingLogFiles)
+            {
+                var day = await existingLogFile.Date.GetDayAsync(this)
+                    .ConfigureAwait(false);
+                await day.AppendAuditAsync(this, EAuditKind.Note, "Migrating from flat-file.", CancellationToken.None)
+                    .ConfigureAwait(false);
+
+                var dayJsonAttachment = await day.GetJsonAttachment(typeof(SapBbdExport).FullName())
+                    .ConfigureAwait(false);
+                await dayJsonAttachment.WithDoAsync(
+                    (YieldHelperForMandatoryBreak.JsonPayload payload, CancellationToken _) =>
+                    {
+                        if (!configHost.TryGet(
+                                "QuickTrack.YieldHelperForMandatoryBreak",
+                                $"Mapping@{day.Date.Year:0000}-{day.Date.Month:00}-{day.Date.Day:00}",
+                                out var json)) return ValueTask.CompletedTask;
+                        var bytes = Encoding.UTF8.GetBytes(json);
+                        var utf8Reader = new Utf8JsonReader(bytes.AsSpan());
+                        var jsonElement = JsonElement.ParseValue(ref utf8Reader);
+                        payload.Insertions.Add(
+                            0,
+                            new YieldHelperForMandatoryBreak.JsonPayload.IntervalData
+                            {
+                                IntervalCount     = jsonElement.GetProperty("TotalLines").GetInt32(),
+                                AfterTimeLogIndex = jsonElement.GetProperty("LineIndex").GetInt32(),
+                            });
+                        return ValueTask.CompletedTask;
+                    });
+                await dayJsonAttachment.UpdateAsync(default)
+                    .ConfigureAwait(false);
+                
+                foreach (var logLine in existingLogFile.GetLines())
+                {
+                    var project = await logLine.Project.Trim().GetProjectAsync();
+                    var projectJsonAttachment = await project.GetJsonAttachment(typeof(SapBbdExport).FullName())
+                        .ConfigureAwait(false);
+                    await projectJsonAttachment.WithDoAsync(
+                        (SapBbdExport.JsonPayload payload, CancellationToken _) =>
+                        {
+                            if (!configHost.TryGet(
+                                    "QuickTrack.SapExporter",
+                                    $"Mapping@{logLine.Project}",
+                                    out var json)) return ValueTask.CompletedTask;
+                            var bytes = Encoding.UTF8.GetBytes(json);
+                            var utf8Reader = new Utf8JsonReader(bytes.AsSpan());
+                            var jsonElement = JsonElement.ParseValue(ref utf8Reader);
+                            payload.ProjectCode    = jsonElement.GetProperty("Project").GetString();
+                            payload.ProfessionCode = jsonElement.GetProperty("Profession").GetString();
+
+                            return ValueTask.CompletedTask;
+                        });
+                    await projectJsonAttachment.UpdateAsync(default)
+                        .ConfigureAwait(false);
+                    await day.AppendTimeLogAsync(
+                        this,
+                        location,
+                        project,
+                        logLine.IsPause
+                            ? ETimeLogMode.Break
+                            : logLine.Message == "quit."
+                                ? ETimeLogMode.Quit
+                                : logLine.Project == "SAP-BBD"
+                                    ? ETimeLogMode.Export
+                                    : ETimeLogMode.Normal,
+                        logLine.Message,
+                        logLine.TimeStampStart)
+                        .ConfigureAwait(false);
+                }
+            }
+        }
     }
 }

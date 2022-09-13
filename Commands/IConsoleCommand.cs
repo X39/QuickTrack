@@ -1,3 +1,5 @@
+using System.Collections.Immutable;
+
 namespace QuickTrack.Commands;
 
 public interface IConsoleCommand
@@ -6,5 +8,5 @@ public interface IConsoleCommand
     string Description { get; }
     string Pattern { get; }
 
-    void Execute(string[] args);
+    ValueTask ExecuteAsync(ImmutableArray<string> args, CancellationToken cancellationToken);
 }

@@ -1,8 +1,10 @@
 using System.Diagnostics;
+using System.Runtime.CompilerServices;
+using QuickTrack.Data.Database;
+using QuickTrack.Data.EntityFramework;
 using QuickTrack.Win32;
 using TextCopy;
 using X39.Util;
-using X39.Util.Collections;
 using X39.Util.Console;
 
 namespace QuickTrack.Exporters;
@@ -25,40 +27,73 @@ public class SapBbdExport : ExporterBase
             Background = ConsoleColor.Gray,
             Foreground = ConsoleColor.White,
         }.WriteLine();
-        Thread.Sleep(TimeSpan.FromMilliseconds(500));
+        // Thread.Sleep(TimeSpan.FromMilliseconds(500));
     }
 
     private static Instruction GatherDebugLine(string message)
-        => new(TimeSpan.Zero, () => WriteDebugLine(message));
+        => new(string.Empty, TimeSpan.Zero, () => WriteDebugLine(message));
 
-    protected override void DoExport(IEnumerable<TimeLogFile> timeLogFiles, string[] args)
+    protected override async ValueTask DoExportAsync(
+        IEnumerable<Day> days,
+        string[] args,
+        CancellationToken cancellationToken)
     {
-        var logFiles = timeLogFiles as TimeLogFile[] ?? timeLogFiles.ToArray();
-        TimeLogLine? timeTrackingLogLineReplaced;
+        var daysArray = days as Day[] ?? days.ToArray();
+        TimeLog? mostRecentTimeLog;
         if (AppendTimeTrackingLogLine)
         {
-            timeTrackingLogLineReplaced = Programm.GetLastLineOfToday(logFiles);
-            var dates = logFiles
-                .Select((q) => q.Date)
-                .Select((q) => q.ToString("dd.MM"));
+            mostRecentTimeLog = await QtRepository.GetMostRecentNormalTimeLog(true, cancellationToken);
+            var dates = daysArray
+                .Select((q) => q.Date.Date.ToString("dd.MM"));
             // ReSharper disable once StringLiteralTypo
-            Programm.Host.TryAppendNewLogLine($"SAP-BBD: Zeiterfassung {string.Join(", ", dates)}");
-            if (timeTrackingLogLineReplaced is not null)
-                Programm.Host.TryAppendNewLogLine(
-                    $"{timeTrackingLogLineReplaced.Project}:{timeTrackingLogLineReplaced.Message}");
+            var day = await DateTime.Today.ToDateOnly().GetDayAsync(this, cancellationToken);
+            var location = await QtRepository.GetLocationOrDefaultAsync(
+                               mostRecentTimeLog?.LocationFk,
+                               cancellationToken)
+                           ?? await Prompt.ForLocationAsync(cancellationToken);
+            var project = await Constants.ProjectForSapExport.GetProjectAsync(cancellationToken);
+            await day.AppendTimeLogAsync(
+                this,
+                location,
+                project,
+                ETimeLogMode.Export,
+                // ReSharper disable once StringLiteralTypo
+                $"Zeiterfassung {string.Join(", ", dates)}",
+                cancellationToken: cancellationToken);
         }
 
+        await using var formatter = new ConsoleStringFormatter();
 
-        MapMissingProjects(logFiles, out var projectToStringMap);
-        EnsureBreaksAreAdded(logFiles);
-        var instructions = GatherInstructions(logFiles, projectToStringMap, ConfigHost).ToArray();
-        PrintTotalTimeRequired(instructions);
-        PrintPreparationsHint(logFiles);
-        ExecuteInstructions(instructions);
-        if (AppendTimeTrackingLogLine && timeTrackingLogLineReplaced is not null)
+        var projectToStringMap = await MapMissingProjectsAsync(daysArray, cancellationToken)
+            .ConfigureAwait(false);
+        await EnsureBreaksAreAddedAsync(daysArray, formatter, cancellationToken)
+            .ConfigureAwait(false);
+        var instructions = new List<Instruction>();
+        await foreach (var instruction in GatherInstructions(
+                               daysArray,
+                               projectToStringMap,
+                               formatter,
+                               cancellationToken)
+                           .WithCancellation(cancellationToken)
+                           .ConfigureAwait(false))
         {
-            Programm.Host.TryAppendNewLogLine(
-                $"{timeTrackingLogLineReplaced.Project}:{timeTrackingLogLineReplaced.Message}");
+            instructions.Add(instruction);
+        }
+        PrintTotalTimeRequired(instructions);
+        PrintPreparationsHint(daysArray);
+        ExecuteInstructions(instructions);
+        if (AppendTimeTrackingLogLine && mostRecentTimeLog is not null)
+        {
+            var day = await DateTime.Today.ToDateOnly().GetDayAsync(this, cancellationToken);
+            var location = await QtRepository.GetLocationAsync(mostRecentTimeLog.LocationFk, cancellationToken);
+            var project = await QtRepository.GetProjectAsync(mostRecentTimeLog.ProjectFk, cancellationToken);
+            await day.AppendTimeLogAsync(
+                this,
+                location,
+                project,
+                mostRecentTimeLog.Mode,
+                mostRecentTimeLog.Message,
+                cancellationToken: cancellationToken);
         }
 
         new ConsoleString("Done!")
@@ -72,20 +107,96 @@ public class SapBbdExport : ExporterBase
 
     private static void ExecuteInstructions(IEnumerable<Instruction> instructions)
     {
-        foreach (var instruction in instructions)
+        var first = true;
+        var stack = new Stack<Instruction>(instructions.Reverse());
+        while (stack.Any())
         {
+            var instruction = stack.Pop();
+            if (!instruction.Source.IsNullOrEmpty())
+                WriteDebugLine(instruction.Source);
             instruction.Action();
-            Thread.Sleep(instruction.Timeout);
+
+
+            var timeout = instruction.Timeout;
+            while (timeout > TimeSpan.Zero)
+            {
+                if (first)
+                    first = false;
+                else
+                    PrintRemainingTime(stack.Append(new Instruction {Timeout = timeout}), true);
+                var lTimeout = timeout > TimeSpan.FromMilliseconds(250)
+                    ? TimeSpan.FromMilliseconds(250)
+                    : timeout;
+                timeout -= lTimeout;
+                PrintRemainingTime(stack.Append(new Instruction {Timeout = timeout}), false);
+                Thread.Sleep(lTimeout);
+            }
+
+            Console.WriteLine();
         }
     }
 
+    private static TimeSpan TotalTimeRequired(IEnumerable<Instruction> instructions)
+        => instructions.Aggregate(TimeSpan.Zero, (l, r) => l + r.Timeout + r.EstimatedDuration);
+
     private static void PrintTotalTimeRequired(IEnumerable<Instruction> instructions)
     {
-        var totalTime = instructions.Aggregate(TimeSpan.Zero, (l, r) => l + r.Timeout + r.EstimatedDuration);
-        Console.WriteLine($"Export will take an estimated time of {totalTime}");
+        var totalTime = TotalTimeRequired(instructions);
+        new ConsoleString("Export will take an estimated time of ")
+        {
+            Foreground = ConsoleColor.White,
+            Background = ConsoleColor.Black,
+        }.Write();
+        new ConsoleString(totalTime.ToString())
+        {
+            Foreground = ConsoleColor.Magenta,
+            Background = ConsoleColor.Black,
+        }.Write();
+        new ConsoleString(".")
+        {
+            Foreground = ConsoleColor.White,
+            Background = ConsoleColor.Black,
+        }.WriteLine();
     }
 
-    private static void PrintPreparationsHint(IEnumerable<TimeLogFile> logFiles)
+    private static void PrintRemainingTime(IEnumerable<Instruction> instructions, bool remove)
+    {
+        var totalTime = TotalTimeRequired(instructions);
+        var consoleString1 = new ConsoleString("Remaining time estimate: ")
+        {
+            Foreground = ConsoleColor.White,
+            Background = ConsoleColor.Black,
+        };
+        var consoleString2 = new ConsoleString(totalTime.ToString())
+        {
+            Foreground = ConsoleColor.Magenta,
+            Background = ConsoleColor.Black,
+        };
+        var consoleString3 = new ConsoleString(".")
+        {
+            Foreground = ConsoleColor.White,
+            Background = ConsoleColor.Black,
+        };
+        if (remove)
+        {
+            var totalLength = consoleString1.Text.Length
+                              + consoleString2.Text.Length
+                              + consoleString3.Text.Length;
+            var bsString = new string('\b', totalLength);
+            var wsString = new string(' ', totalLength);
+            Console.Write(bsString);
+            Console.Write(wsString);
+            Console.Write(bsString);
+        }
+        else
+        {
+            consoleString1.Write();
+            consoleString2.Write();
+            consoleString3.Write();
+        }
+    }
+
+    private static void PrintPreparationsHint(IEnumerable<Day> logFiles)
     {
         void Log(string s)
             => new ConsoleString(s)
@@ -101,7 +212,7 @@ public class SapBbdExport : ExporterBase
         Log($"    3. Select the date {logFiles.First().Date}");
         Log($"    4. Choose the day view");
         Log($"    5. Create a new row");
-        Log($"    6. Select the \"Aufgabe\" column");
+        Log($"    6. Select the \"Aufgabe\" cell of that new row");
         // ReSharper restore StringLiteralTypo
 
         HumanTimeout(TimeSpan.FromSeconds(5));
@@ -118,7 +229,8 @@ public class SapBbdExport : ExporterBase
             }.WriteLine();
 
         Log(
-            $"Once pressing any key, a timer of {timeSpan.TotalSeconds} seconds will start to allow you focus the target area.");
+            $"Once pressing any key, a timer of {timeSpan.TotalSeconds} " +
+            $"seconds will start, allowing you to focus the target area.");
         Log("Please press any key...");
         Console.ReadKey(true);
         for (var i = 5; i > 0; i--)
@@ -128,60 +240,103 @@ public class SapBbdExport : ExporterBase
         }
     }
 
-    private void EnsureBreaksAreAdded(IEnumerable<TimeLogFile> logFiles)
+    private async Task EnsureBreaksAreAddedAsync(
+        IEnumerable<Day> days,
+        ConsoleStringFormatter formatter,
+        CancellationToken cancellationToken)
     {
-        var yieldHelper = new YieldHelperForMandatoryBreak(ConfigHost);
-        foreach (var logFile in logFiles)
+        var yieldHelper = new YieldHelperForMandatoryBreak(formatter);
+        foreach (var day in days)
         {
-            yieldHelper.GetLinesWithMandatoryBreak(logFile);
+            await foreach (var _ in yieldHelper.GetLinesWithMandatoryBreak(day, cancellationToken))
+            {
+                // empty
+            }
         }
     }
 
-    private static TimeLogLine[] GetLogLinesWithBreaksAdded(
-        TimeLogFile logFile,
-        ConfigHost configHost)
+    private async IAsyncEnumerable<(TimeLog timeLog, DateTime? end, int index)> GetLogLinesWithBreaksAdded(
+        Day day,
+        ConsoleStringFormatter formatter,
+        [EnumeratorCancellation] CancellationToken cancellationToken)
     {
-        var yieldHelper = new YieldHelperForMandatoryBreak(configHost);
-        return yieldHelper.GetLinesWithMandatoryBreak(logFile);
+        var yieldHelper = new YieldHelperForMandatoryBreak(formatter);
+        var index = 0;
+        TimeLog? previous = null;
+        await foreach (var timeLog in yieldHelper.GetLinesWithMandatoryBreak(day, cancellationToken)
+                           .WithCancellation(cancellationToken))
+        {
+            if (previous is not null)
+            {
+                yield return (previous, timeLog.TimeStamp, index++);
+            }
+
+            previous = timeLog;
+        }
+
+        if (previous is not null)
+        {
+            yield return (previous, null, index);
+        }
     }
 
-    private static IEnumerable<Instruction> GatherInstructions(
-        IReadOnlyCollection<TimeLogFile> timeLogFiles,
-        IReadOnlyDictionary<string, (string Project, string Profession)> projectToStringMap,
-        ConfigHost configHost)
+    private async IAsyncEnumerable<Instruction> GatherInstructions(
+        IReadOnlyCollection<Day> days,
+        IReadOnlyDictionary<int, (string Project, string Profession, Project Entity)> projectToStringMap,
+        ConsoleStringFormatter formatter,
+        [EnumeratorCancellation] CancellationToken cancellationToken)
     {
-        var previousDate = timeLogFiles.First().Date;
+        var previousDate = days.First().Date;
         var zulu = new TimeOnly(0, 0);
-        foreach (var logFile in timeLogFiles)
+        foreach (var logFile in days)
         {
             var timeSpan = previousDate.ToDateTime(zulu) - logFile.Date.ToDateTime(zulu);
             previousDate = logFile.Date;
-            var days = (int) Math.Round(timeSpan.TotalDays);
-            for (var i = days; i < 0; i++)
+            var totalDays = (int) Math.Round(timeSpan.TotalDays);
+            if (totalDays < 0)
             {
-                foreach (var instruction in GatherMoveToNextDayInstructions())
-                    yield return instruction;
-                yield return GatherDebugLine($"Moved to next day");
+                {
+                    yield return Keyboard.Press.Escape();
+                    foreach (var instruction in Keyboard.Combination.ControlPos1())
+                        yield return instruction;
+                    foreach (var instruction in Keyboard.Combination.ShiftTab())
+                        yield return instruction;
+                }
+                for (var i = totalDays; i < 0; i++)
+                {
+                    foreach (var instruction in GatherMoveToNextDayInstructions())
+                        yield return instruction;
+                    yield return GatherDebugLine($"Moved to next day");
+                }
+
+                yield return Keyboard.Press.Enter();
+                yield return GatherCommitTimeout();
             }
 
-            foreach (var instruction in GatherExportLogFileInstructions(projectToStringMap, logFile, configHost))
+            await foreach (var instruction in GatherExportLogFileInstructions(
+                                   projectToStringMap,
+                                   logFile,
+                                   formatter,
+                                   cancellationToken)
+                               .WithCancellation(cancellationToken))
                 yield return instruction;
         }
     }
 
-    private static IEnumerable<Instruction> GatherExportLogFileInstructions(
-        IReadOnlyDictionary<string, (string Project, string Profession)> projectToStringMap,
-        TimeLogFile logFile,
-        ConfigHost configHost)
+    private async IAsyncEnumerable<Instruction> GatherExportLogFileInstructions(
+        IReadOnlyDictionary<int, (string Project, string Profession, Project Entity)> projectToStringMap,
+        Day day,
+        ConsoleStringFormatter formatter,
+        [EnumeratorCancellation] CancellationToken cancellationToken)
     {
-        yield return GatherDebugLine($"Exporting to SAP BBD: {logFile.Date}");
-        var logLines = GetLogLinesWithBreaksAdded(logFile, configHost);
-        foreach (var (value, index) in logLines.Indexed())
+        yield return GatherDebugLine($"Exporting to SAP BBD: {day.Date}");
+        var logLines = GetLogLinesWithBreaksAdded(day, formatter, cancellationToken);
+        await foreach (var (value, endTime, index) in logLines.WithCancellation(cancellationToken))
         {
             yield return GatherDebugLine($"Exporting Line: {value}");
-            if (value.TimeStampEnd == default)
+            if (endTime is null)
                 break;
-            if (value.Project == Constants.ProjectForBreak)
+            if (value.Mode == ETimeLogMode.Break)
                 continue;
             if (index != 0)
             {
@@ -224,7 +379,7 @@ public class SapBbdExport : ExporterBase
             // ReSharper disable once StringLiteralTypo
             {
                 yield return Keyboard.Press.SpaceBar();
-                yield return Keyboard.Special.WriteEndTime(value);
+                yield return Keyboard.Special.WriteEndTime(endTime.Value);
                 yield return Keyboard.Press.Enter();
                 yield return GatherCommitTimeout();
             }
@@ -233,7 +388,7 @@ public class SapBbdExport : ExporterBase
             // ReSharper disable once StringLiteralTypo
             {
                 yield return Keyboard.Press.SpaceBar();
-                yield return Keyboard.Special.WriteDescription(value);
+                yield return Keyboard.Special.WriteDescription(projectToStringMap[value.ProjectFk].Entity, value);
                 yield return Keyboard.Press.Tab();
                 yield return GatherCommitTimeout();
             }
@@ -264,11 +419,14 @@ public class SapBbdExport : ExporterBase
 
     private static Instruction WalkToEmptyCell(int index)
         => new(
+            nameof(WalkToEmptyCell),
             SafetyTimeout,
             () =>
             {
                 static void Invoke(Instruction instruction)
                 {
+                    if (!instruction.Source.IsNullOrEmpty())
+                        WriteDebugLine(instruction.Source);
                     instruction.Action();
                     Thread.Sleep(instruction.Timeout);
                 }
@@ -306,19 +464,8 @@ public class SapBbdExport : ExporterBase
 
     private static IEnumerable<Instruction> GatherMoveToNextDayInstructions()
     {
+        for (var i = 0; i < 4; i++)
         {
-            yield return Keyboard.Press.Escape();
-            foreach (var instruction in Keyboard.Combination.ShiftTab())
-                yield return instruction;
-        }
-
-        {
-            foreach (var instruction in Keyboard.Combination.ShiftTab())
-                yield return instruction;
-            foreach (var instruction in Keyboard.Combination.ShiftTab())
-                yield return instruction;
-            foreach (var instruction in Keyboard.Combination.ShiftTab())
-                yield return instruction;
             foreach (var instruction in Keyboard.Combination.ShiftTab())
                 yield return instruction;
         }
@@ -329,24 +476,24 @@ public class SapBbdExport : ExporterBase
             yield return GatherCommitTimeout();
         }
 
+        for (var i = 0; i < 4; i++)
         {
             yield return Keyboard.Press.Tab();
-            yield return Keyboard.Press.Tab();
-            yield return Keyboard.Press.Tab();
-            yield return Keyboard.Press.Tab();
-            yield return Keyboard.Press.Enter();
         }
     }
 
-    private static Instruction GatherCommitTimeout() => new(CommitTimeout, () => { });
-    private static Instruction GatherSafetyTimeout() => new(SafetyTimeout, () => { });
+    private static Instruction GatherCommitTimeout() => new(nameof(CommitTimeout), CommitTimeout, () => { });
+    private static Instruction GatherSafetyTimeout() => new(nameof(SafetyTimeout), SafetyTimeout, () => { });
 
     private static class Keyboard
     {
         public static class Press
         {
-            private static Instruction For(EVirtualKeyCode keyCode)
-                => new Instruction(SafetyTimeout, () => Interop.SendKeyboardInput.KeyPress(keyCode));
+            private static Instruction For(EVirtualKeyCode keyCode, [CallerMemberName] string callee = "")
+                => new Instruction(
+                    nameof(Press) + "." + callee,
+                    SafetyTimeout,
+                    () => Interop.SendKeyboardInput.KeyPress(keyCode));
 
             public static Instruction Escape() => For(EVirtualKeyCode.Escape);
             public static Instruction Tab() => For(EVirtualKeyCode.Tab);
@@ -363,8 +510,11 @@ public class SapBbdExport : ExporterBase
 
         private static class Down
         {
-            private static Instruction For(EVirtualKeyCode keyCode)
-                => new Instruction(SafetyTimeout, () => Interop.SendKeyboardInput.KeyDown(keyCode));
+            private static Instruction For(EVirtualKeyCode keyCode, [CallerMemberName] string callee = "")
+                => new Instruction(
+                    nameof(Down) + "." + callee,
+                    SafetyTimeout,
+                    () => Interop.SendKeyboardInput.KeyDown(keyCode));
 
             public static Instruction Shift() => For(EVirtualKeyCode.Shift);
             public static Instruction Control() => For(EVirtualKeyCode.Control);
@@ -374,8 +524,11 @@ public class SapBbdExport : ExporterBase
 
         private static class Up
         {
-            private static Instruction For(EVirtualKeyCode keyCode)
-                => new Instruction(SafetyTimeout, () => Interop.SendKeyboardInput.KeyUp(keyCode));
+            private static Instruction For(EVirtualKeyCode keyCode, [CallerMemberName] string callee = "")
+                => new Instruction(
+                    nameof(Up) + "." + callee,
+                    SafetyTimeout,
+                    () => Interop.SendKeyboardInput.KeyUp(keyCode));
 
             public static Instruction Shift() => For(EVirtualKeyCode.Shift);
             public static Instruction Control() => For(EVirtualKeyCode.Control);
@@ -426,6 +579,7 @@ public class SapBbdExport : ExporterBase
             private static Instruction WriteText(string text)
             {
                 return new Instruction(
+                    nameof(Special) + "." + nameof(WriteText),
                     SafetyTimeout,
                     () =>
                     {
@@ -453,103 +607,124 @@ public class SapBbdExport : ExporterBase
             }
 
             public static Instruction WriteProject(
-                IReadOnlyDictionary<string, (string Project, string Profession)> projectToStringMap,
-                TimeLogLine timeLogLine)
+                IReadOnlyDictionary<int, (string Project, string Profession, Project Entity)> projectToStringMap,
+                TimeLog timeLogLine)
             {
-                var (project, _) = projectToStringMap[timeLogLine.Project.Trim()];
+                var (project, _, _) = projectToStringMap[timeLogLine.ProjectFk];
                 return WriteText(project);
             }
 
             public static Instruction WriteProfession(
-                IReadOnlyDictionary<string, (string Project, string Profession)> projectToStringMap,
-                TimeLogLine timeLogLine)
+                IReadOnlyDictionary<int, (string Project, string Profession, Project Entity)> projectToStringMap,
+                TimeLog timeLogLine)
             {
-                var (_, profession) = projectToStringMap[timeLogLine.Project.Trim()];
+                var (_, profession, _) = projectToStringMap[timeLogLine.ProjectFk];
                 return WriteText(profession);
             }
 
-            public static Instruction WriteEndTime(TimeLogLine value)
+            public static Instruction WriteEndTime(DateTime endTime)
             {
-                return WriteText($"{value.TimeStampEnd:HH:mm}");
+                return WriteText($"{endTime:HH:mm}");
             }
 
 
-            public static Instruction WriteStartTime(TimeLogLine value)
+            public static Instruction WriteStartTime(TimeLog value)
             {
-                return WriteText($"{value.TimeStampStart:HH:mm}");
+                return WriteText($"{value.TimeStamp:HH:mm}");
             }
 
-            public static Instruction WriteDescription(TimeLogLine value)
+            public static Instruction WriteDescription(Project project, TimeLog value)
             {
-                var msg = $"{value.Project}: {value.Message}";
+                var msg = $"{project.Title}: {value.Message}";
                 return WriteText(msg);
             }
         }
     }
 
-    private void MapMissingProjects(
-        IEnumerable<TimeLogFile> logFiles,
-        out Dictionary<string, (string Project, string Profession)> projectToStringMap)
+    private static async Task<Dictionary<int, (string Project, string Profession, Project Entity)>> MapMissingProjectsAsync(
+        IEnumerable<Day> days,
+        CancellationToken cancellationToken)
     {
-        projectToStringMap = new Dictionary<string, (string Project, string Profession)>();
-        foreach (var timeLogLine in logFiles.SelectMany((q) => q.GetLines()))
+        var projectToStringMap = new Dictionary<int, (string Project, string Profession, Project Entity)>();
+        foreach (var day in days)
         {
-            if (projectToStringMap.ContainsKey(timeLogLine.Project.Trim()))
-                continue;
-            if (timeLogLine.Project == Constants.ProjectForBreak)
-                continue;
-            var key = $"Mapping@{timeLogLine.Project}";
-            var value = ConfigHost.Get<ProjectProfessionTuple>(
-                typeof(SapExporter).FullName(),
-                key);
-            if (value is not null)
+            await foreach (var timeLog in day.GetTimeLogs(cancellationToken)
+                               .WithCancellation(cancellationToken))
             {
-                projectToStringMap[timeLogLine.Project] = (value.Project, value.Profession);
-                continue;
+                if (projectToStringMap.ContainsKey(timeLog.ProjectFk))
+                    continue;
+                if (timeLog.Mode == ETimeLogMode.Break)
+                    continue;
+                var project = await timeLog.GetProjectAsync(cancellationToken: cancellationToken);
+                var jsonAttachment = await project.GetJsonAttachment(typeof(SapBbdExport).FullName(), cancellationToken)
+                    .ConfigureAwait(false);
+                await jsonAttachment.WithDoAsync(
+                        // ReSharper disable once VariableHidesOuterVariable
+                        (JsonPayload payload, CancellationToken _) =>
+                        {
+                            if (payload.ProjectCode.IsNullOrWhiteSpace())
+                                payload.ProjectCode = AskForProject(project);
+                            if (payload.ProfessionCode.IsNullOrWhiteSpace())
+                                payload.ProfessionCode = AskForProfession(project);
+                            projectToStringMap[timeLog.ProjectFk] = (payload.ProjectCode, payload.ProfessionCode, project);
+                            return ValueTask.CompletedTask;
+                        },
+                        cancellationToken)
+                    .ConfigureAwait(false);
+                await jsonAttachment.UpdateAsync(cancellationToken)
+                    .ConfigureAwait(false);
             }
+        }
 
-            askProjectCode:
+        return projectToStringMap;
+    }
+
+    public class JsonPayload
+    {
+        public string? ProjectCode { get; set; }
+        public string? ProfessionCode { get; set; }
+    }
+
+    private static string AskForProject(Project project)
+    {
+        string line;
+        do
+        {
             new ConsoleString
             {
                 // ReSharper disable once StringLiteralTypo
-                Text       = $"Please input the project code to use for '{timeLogLine.Project}' (eg. IPRO43-4):",
-                Foreground = ConsoleColor.Yellow,
-                Background = ConsoleColor.Black,
-            }.Write();
-            var line = Console.ReadLine()?.Trim() ?? string.Empty;
-            if (line.IsNullOrWhiteSpace())
-                goto askProjectCode;
-            var project = line;
-
-
-            askProfessionCode:
-            new ConsoleString
-            {
-                Text =
-                    $"Please input the profession code to use for '{timeLogLine.Project}' (numerical code preferred; eg. 22):",
+                Text       = $"Please input the project code to use for '{project.Title}' (eg. IPRO43-4):",
                 Foreground = ConsoleColor.Yellow,
                 Background = ConsoleColor.Black,
             }.Write();
             line = Console.ReadLine()?.Trim() ?? string.Empty;
-            if (line.IsNullOrWhiteSpace())
-                goto askProfessionCode;
+        } while (line.IsNullOrWhiteSpace());
 
-            projectToStringMap[timeLogLine.Project.Trim()] = (project, line);
-            ConfigHost.Set(
-                typeof(SapExporter).FullName(),
-                key,
-                new ProjectProfessionTuple(project, line));
-        }
+        var projectCode = line;
+        return projectCode;
     }
 
-    private record ProjectProfessionTuple(string Project, string Profession);
+    private static string AskForProfession(Project project)
+    {
+        string line;
+        do
+        {
+            new ConsoleString
+            {
+                Text =
+                    $"Please input the profession code to use for '{project.Title}' (numerical code preferred; eg. 22):",
+                Foreground = ConsoleColor.Yellow,
+                Background = ConsoleColor.Black,
+            }.Write();
+            line = Console.ReadLine()?.Trim() ?? string.Empty;
+        } while (line.IsNullOrWhiteSpace());
 
-    private record struct Instruction(TimeSpan Timeout, Action Action)
+        var professionCode = line;
+        return professionCode;
+    }
+
+    private record struct Instruction(string Source, TimeSpan Timeout, Action Action)
     {
         public TimeSpan EstimatedDuration { get; init; } = TimeSpan.Zero;
-    }
-
-    public SapBbdExport(ConfigHost configHost) : base(configHost)
-    {
     }
 }

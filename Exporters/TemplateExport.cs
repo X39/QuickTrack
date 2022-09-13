@@ -1,8 +1,9 @@
 using System.Diagnostics.CodeAnalysis;
 using System.Text.RegularExpressions;
 using JetBrains.Annotations;
+using QuickTrack.Data.Database;
+using QuickTrack.Data.EntityFramework;
 using X39.Util;
-using X39.Util.Collections;
 using X39.Util.Console;
 
 namespace QuickTrack.Exporters;
@@ -69,13 +70,17 @@ public class TemplateExport : ExporterBase
     protected override string ArgsPattern => "TEMPLATE OUTPUT";
 
     private const string TemplateFolderName = "templates";
+
     public override string HelpText => $"Creates a transforming export using a template (arg 'TEMPLATE') that " +
                                        $"is located inside of the '{TemplateFolderName}', " +
                                        $"creating an export file (arg 'OUTPUT') at the current workspace. " +
                                        $"Template files have the following format:\r\n" +
                                        ConfigHost.BindingTemplate<Template>(null);
 
-    protected override void DoExport(IEnumerable<TimeLogFile> timeLogFiles, string[] args)
+    protected override async ValueTask DoExportAsync(
+        IEnumerable<Day> days,
+        string[] args,
+        CancellationToken cancellationToken)
     {
         string transformFile, outputFile;
         switch (args.Length)
@@ -98,7 +103,7 @@ public class TemplateExport : ExporterBase
                 return;
             case 2:
                 transformFile = args[0];
-                outputFile = args[1];
+                outputFile    = args[1];
                 break;
             default:
                 new ConsoleString
@@ -135,7 +140,8 @@ public class TemplateExport : ExporterBase
 
         var template = ParseTransformTemplateFromFile(transformFile);
         outputFile = MakeOutputFolderPath(outputFile);
-        ExportTransformed(timeLogFiles, template, outputFile);
+        await ExportTransformedAsync(days, template, outputFile, cancellationToken)
+            .ConfigureAwait(false);
         new ConsoleString
         {
             Text       = $"Export created at '{outputFile}'",
@@ -144,50 +150,113 @@ public class TemplateExport : ExporterBase
         }.WriteLine();
     }
 
-    private static void ExportTransformed(IEnumerable<TimeLogFile> timeLogFiles, Template template, string outputFile)
+    private static async Task<Project> GetProjectAsync(
+        IDictionary<int, Project> dictionary,
+        int projectId,
+        CancellationToken cancellationToken)
     {
-        using var writer = new StreamWriter(outputFile, false);
+        if (dictionary.TryGetValue(projectId, out var project))
+            return project;
+        project               = await QtRepository.GetProjectAsync(projectId, cancellationToken);
+        dictionary[projectId] = project;
+        return project;
+    }
+
+    private static async Task ExportTransformedAsync(
+        IEnumerable<Day> days,
+        Template template,
+        string outputFile,
+        CancellationToken cancellationToken)
+    {
+        await using var writer = new StreamWriter(outputFile, false);
         if (template.PrefixWith is not null)
-            writer.Write(template.PrefixWith);
-        foreach (var (timeLogLine, index) in timeLogFiles.SelectMany((q) => q.GetLines()).Indexed())
+            await writer.WriteAsync(template.PrefixWith);
+        var index = 0;
+        var projectDictionary = new Dictionary<int, Project>();
+        foreach (var day in days)
         {
-            if (index > 0)
-                writer.Write(template.SeparateBy);
-            var dateString = timeLogLine.TimeStampStart.ToString(template.DateFormat);
-            var startString = timeLogLine.TimeStampStart.ToString(template.TimeStampStartFormat);
-            var endString = timeLogLine.TimeStampEnd.ToString(template.TimeStampEndFormat);
-            var allStrings = new[]
+            TimeLog? previous = null;
+            await foreach (var timeLog in day
+                               .GetTimeLogs(cancellationToken)
+                               .WithCancellation(cancellationToken)
+                               .ConfigureAwait(false))
             {
-                dateString,
-                startString,
-                endString,
-                timeLogLine.Project,
-                timeLogLine.Message
-            };
-            var refNames = new[]
+                if (previous is not null)
+                {
+                    await WriteAsync(
+                        projectDictionary,
+                        template,
+                        index,
+                        writer,
+                        previous,
+                        timeLog.TimeStamp - previous.TimeStamp,
+                        cancellationToken);
+                    index++;
+                }
+
+                previous = timeLog;
+            }
+
+            // ReSharper disable once InvertIf
+            if (previous is not null)
             {
-                template.DateReferenceName,
-                template.StartReferenceName,
-                template.EndReferenceName,
-                template.ProjectReferenceName,
-                template.MessageReferenceName
-            };
-            var regexInput = string.Concat(allStrings);
-            var regexPattern = string.Concat(allStrings.Select((s, i) => $"(?<{refNames[i]}>.{{{s.Length}}})"));
-            var replaced = Regex.Replace(regexInput, regexPattern, template.ReplaceRegex);
-            writer.Write(replaced);
+                await WriteAsync(
+                    projectDictionary,
+                    template,
+                    index,
+                    writer,
+                    previous,
+                    TimeSpan.Zero,
+                    cancellationToken);
+                index++;
+            }
         }
+
         if (template.SuffixWith is not null)
-            writer.Write(template.SuffixWith);
+            await writer.WriteAsync(template.SuffixWith);
+    }
+
+    private static async Task WriteAsync(
+        Dictionary<int, Project> projectDictionary,
+        Template template,
+        int index,
+        TextWriter writer,
+        TimeLog timeLog,
+        TimeSpan timeRequired,
+        CancellationToken cancellationToken)
+    {
+        if (index > 0)
+            await writer.WriteAsync(template.SeparateBy);
+        var dateString = timeLog.TimeStamp.ToString(template.DateFormat);
+        var startString = timeLog.TimeStamp.ToString(template.TimeStampStartFormat);
+        var endString = (timeLog.TimeStamp + timeRequired).ToString(template.TimeStampEndFormat);
+        var project = await GetProjectAsync(projectDictionary, timeLog.ProjectFk, cancellationToken)
+            .ConfigureAwait(false);
+        var allStrings = new[]
+        {
+            dateString,
+            startString,
+            endString,
+            project.Title,
+            timeLog.Message
+        };
+        var refNames = new[]
+        {
+            template.DateReferenceName,
+            template.StartReferenceName,
+            template.EndReferenceName,
+            template.ProjectReferenceName,
+            template.MessageReferenceName
+        };
+        var regexInput = string.Concat(allStrings);
+        var regexPattern = string.Concat(allStrings.Select((s, i) => $"(?<{refNames[i]}>.{{{s.Length}}})"));
+        var replaced = Regex.Replace(regexInput, regexPattern, template.ReplaceRegex);
+        await writer.WriteAsync(replaced);
     }
 
     private static Template ParseTransformTemplateFromFile(string transformFile)
     {
         var configHost = new ConfigHost(transformFile);
         return configHost.Bind<Template>(null);
-    }
-
-    public TemplateExport(ConfigHost configHost) : base(configHost)
-    {
     }
 }

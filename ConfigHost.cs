@@ -10,6 +10,7 @@ using X39.Util.Collections;
 
 namespace QuickTrack;
 
+[Obsolete]
 public class ConfigHost
 {
     private readonly string _filePath;
@@ -68,6 +69,7 @@ public class ConfigHost
         if (realm is not null && realm.IndexOfAny(new[] {'@', '='}) is not -1)
             throw new ValidationException($"Realm may not contain either '@' or '='. Realm: {realm}");
     }
+
     [StackTraceHidden]
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static void ValidateKey(string key)
@@ -75,6 +77,7 @@ public class ConfigHost
         if (key.IndexOfAny(new[] {'='}) is not -1)
             throw new ValidationException($"Key may not contain '='. Key: {key}");
     }
+
     [StackTraceHidden]
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static string FileString(string? realm, string key, string value)
@@ -112,6 +115,15 @@ public class ConfigHost
             return false;
         value = System.Text.Json.JsonSerializer.Deserialize<T>(valueString);
         return value is not null;
+    }
+    public bool TryGet(string? realm, string key, [MaybeNullWhen(false)] out string value)
+    {
+        LoadIfWasNotLoaded();
+        value = default;
+        if (!Values.TryGetValue((realm, key), out var valueString))
+            return false;
+        value = valueString;
+        return true;
     }
 
     public T? Get<T>(string? realm, string key, T? @default)
@@ -161,6 +173,7 @@ public class ConfigHost
 
         return bound;
     }
+
     public static string BindingTemplate<T>(string? realm)
         where T : class
     {

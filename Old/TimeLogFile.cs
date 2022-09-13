@@ -4,6 +4,7 @@ using System.Globalization;
 
 namespace QuickTrack;
 
+[Obsolete]
 public class TimeLogFile
 {
     public string FilePath { get; }
@@ -98,7 +99,7 @@ public class TimeLogFile
     private IEnumerable<TimeLogLine> GetLinesOfTLogV1()
     {
         var lines = File.ReadAllLines(FilePath);
-        var last = new TimeLogLine(default, default, string.Empty, string.Empty);
+        var last = new TimeLogLine(default, default, string.Empty, string.Empty, string.Empty);
         foreach (var line in lines)
         {
             var splatted = line.Split("|!|");
@@ -111,6 +112,7 @@ public class TimeLogFile
                     CultureInfo.InvariantCulture,
                     DateTimeStyles.AssumeUniversal),
                 default,
+                string.Empty,
                 splatted[1],
                 string.Join("|!|", splatted.Skip(2)));
             if (last.TimeStampStart != default)
@@ -143,5 +145,18 @@ public class TimeLogFile
             .ToString("s", CultureInfo.InvariantCulture);
         writer.WriteLine(
             $"{timeStampString}|!|{timeLogLine.Project}|!|{timeLogLine.Message}");
+    }
+
+    public TimeSpan GetDuration()
+    {
+        return GetLines()
+            .Where((q) => !q.IsPause)
+            .Aggregate(TimeSpan.Zero, (l, r) => l + r.Duration);
+    }
+    public TimeSpan GetDurationRounded()
+    {
+        return GetLines()
+            .Where((q) => !q.IsPause)
+            .Aggregate(TimeSpan.Zero, (l, r) => l + r.DurationRounded);
     }
 }
