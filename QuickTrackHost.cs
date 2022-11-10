@@ -10,8 +10,8 @@ namespace QuickTrack;
 
 public class QuickTrackHost
 {
-    private          Location?     _currentLocation;
-    private          Project?      _lastProject;
+    public Location? CurrentLocation { get; set; }
+    public Project? CurrentProject { get; set; }
     private          TimeLog?      _lastLog;
     private readonly string        _workspace;
     private          bool          _isBreak;
@@ -29,19 +29,21 @@ public class QuickTrackHost
                 "project:message | message",
                 "Appends a new line to the log. If project is omitted, the previous one will be used.",
                 OnUnmatchedCommand));
-        CommandParser.RegisterCommand(new FluentConsoleCommand(
-            new[] {Constants.MessageForBreak, Constants.ProjectForBreak},
-            () => "( pause | break ) [ Message ]",
-            "Starts a break and switches time-logging to the pause mode. If a message is provided, it will be logged.",
-            StartBreak));
-        CommandParser.RegisterCommand( new FluentConsoleCommand(
-            new[] {"quit", "end", "exit"},
-            () => "quit | end | exit",
-            "Writes 'end of day' message and terminates the program. If a message is provided, it will be logged.",
-            QuitProgram));
-        _lastProject     = lastTimeLogLine?.Project;
-        _lastLog         = lastTimeLogLine?.TimeLog;
-        _currentLocation = startLocation;
+        CommandParser.RegisterCommand(
+            new FluentConsoleCommand(
+                new[] {Constants.MessageForBreak, Constants.ProjectForBreak},
+                () => "( pause | break ) [ Message ]",
+                "Starts a break and switches time-logging to the pause mode. If a message is provided, it will be logged.",
+                StartBreak));
+        CommandParser.RegisterCommand(
+            new FluentConsoleCommand(
+                new[] {"quit", "end", "exit"},
+                () => "quit | end | exit",
+                "Writes 'end of day' message and terminates the program. If a message is provided, it will be logged.",
+                QuitProgram));
+        CurrentProject    = lastTimeLogLine?.Project;
+        _lastLog        = lastTimeLogLine?.TimeLog;
+        CurrentLocation = startLocation;
     }
 
     public async ValueTask QuitProgram(ImmutableArray<string> args, CancellationToken cancellationToken)
@@ -51,7 +53,7 @@ public class QuickTrackHost
             message = string.Join(" ", args);
         var day = await DateTime.Today.ToDateOnly().GetDayAsync(this, cancellationToken);
         var project = await Constants.ProjectForQuit.GetProjectAsync(cancellationToken);
-        var location = _currentLocation ?? await Prompt.ForLocationAsync(cancellationToken);
+        var location = CurrentLocation ?? await Prompt.ForLocationAsync(cancellationToken);
         await day.AppendTimeLogAsync(
             this,
             location,
@@ -73,13 +75,14 @@ public class QuickTrackHost
             }.WriteLine();
             return;
         }
+
         _isBreak = true;
         var message = Constants.MessageForBreak;
         if (args.Any())
             message = string.Join(" ", args);
         var day = await DateTime.Today.ToDateOnly().GetDayAsync(this, cancellationToken);
         var project = await Constants.ProjectForBreak.GetProjectAsync(cancellationToken);
-        var location = _currentLocation ?? await Prompt.ForLocationAsync(cancellationToken);
+        var location = CurrentLocation ?? await Prompt.ForLocationAsync(cancellationToken);
         var timeLog = await day.AppendTimeLogAsync(
             this,
             location,
@@ -98,7 +101,7 @@ public class QuickTrackHost
             {
                 _isBreak = false;
                 var lastLog = _lastLog ?? throw new NullReferenceException("_lastLog is null");
-                var lastProject = _lastProject ?? throw new NullReferenceException("_lastProject is null");
+                var lastProject = CurrentProject ?? throw new NullReferenceException("CurrentProject is null");
                 line = $"{lastProject.Title}:{lastLog.Message}";
             }
             else
@@ -114,29 +117,30 @@ public class QuickTrackHost
         }
 
         var splatted = line.Split(":");
-        if (splatted.Length == 1 && _lastProject is not null)
+        if (splatted.Length == 1 && CurrentProject is not null)
         {
-            splatted = new[] {_lastProject.Title, splatted[0]};
+            splatted = new[] {CurrentProject.Title, splatted[0]};
         }
 
         if (splatted.Length <= 1)
             return false;
         var project = splatted[0];
         var message = splatted[1];
-        _lastProject = await project.GetProjectAsync(cancellationToken);
+        CurrentProject = await project.GetProjectAsync(cancellationToken);
         var day = await DateTime.Today.ToDateOnly().GetDayAsync(this, cancellationToken);
-        var location = _currentLocation ?? await Prompt.ForLocationAsync(cancellationToken);
+        var location = CurrentLocation ?? await Prompt.ForLocationAsync(cancellationToken);
+        var tmp = _lastLog;
         _lastLog = await day.AppendTimeLogAsync(
             this,
             location,
-            _lastProject,
+            CurrentProject,
             ETimeLogMode.Normal,
             message,
             cancellationToken: cancellationToken);
 
         await using var formatter = new ConsoleStringFormatter();
-        var consoleString = await formatter.ToConsoleInputStringAsync(_lastLog, cancellationToken);
-        new ConsoleString(consoleString).WriteLine();
+        var consoleString = await _lastLog.ToConsoleString(day, formatter, cancellationToken);
+        consoleString.WriteLine();
         return true;
     }
 

@@ -46,5 +46,10 @@ public class UndoCommand : IConsoleCommand
         await lastLog
             .DeleteAsync(this, cancellationToken)
             .ConfigureAwait(false);
+        new ConsoleString($"Removed {lastLog.Message}")
+        {
+            Foreground = ConsoleColor.White,
+            Background = ConsoleColor.DarkGreen,
+        }.WriteLine();
     }
 }

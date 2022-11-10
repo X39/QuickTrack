@@ -24,47 +24,109 @@ public class EditCommand : IConsoleCommand
         $"Dates are to be provided in the format {Constants.DateFormatFormal} or {Constants.DateFormatNoDot}" +
         $" (eg. 21.02 or 2102)";
 
-    public string Pattern => "( edit | modify | nano ) DATE { DATE }";
+    public string Pattern => "( edit | modify | nano ) DATE_FIRST [ DATE_LAST ] ";
 
     public async ValueTask ExecuteAsync(ImmutableArray<string> args, CancellationToken cancellationToken)
     {
-        var dates = new DateOnly[args.Length];
+        var dates = new List<DateOnly>();
         var error = false;
-        if (args.Length is 0)
+        switch (args.Length)
         {
-            new ConsoleString(
-                $"No date provided. Please provide a date in the format " +
-                $"{Constants.DateFormatFormal} or {Constants.DateFormatNoDot}")
-            {
-                Foreground = ConsoleColor.Red,
-                Background = ConsoleColor.Black,
-            }.WriteLine();
-            return;
-        }
-
-        for (var i = 0; i < args.Length; i++)
-        {
-            var dateString = args[i];
-            if (DateOnly.TryParseExact(
-                    dateString,
-                    new[] {Constants.DateFormatFormal, Constants.DateFormatNoDot},
-                    CultureInfo.CurrentCulture,
-                    DateTimeStyles.AllowWhiteSpaces,
-                    out var date))
-                dates[i] = date;
-            else
-            {
-                new ConsoleString($"Failed to parse date string '{dateString}'")
+            case 0:
+                new ConsoleString(
+                    $"No date provided. Please provide a date in the format " +
+                    $"{Constants.DateFormatFormal} or {Constants.DateFormatNoDot}")
                 {
                     Foreground = ConsoleColor.Red,
                     Background = ConsoleColor.Black,
                 }.WriteLine();
-                error = true;
+                return;
+            case 1:
+            {
+                var dateString = args[0];
+                if (DateOnly.TryParseExact(
+                        dateString,
+                        new[] {Constants.DateFormatFormal, Constants.DateFormatNoDot},
+                        CultureInfo.CurrentCulture,
+                        DateTimeStyles.AllowWhiteSpaces,
+                        out var date))
+                {
+                    dates.Add(date);
+                }
+                else
+                {
+                    new ConsoleString($"Failed to parse date string '{dateString}'")
+                    {
+                        Foreground = ConsoleColor.Red,
+                        Background = ConsoleColor.Black,
+                    }.WriteLine();
+                    error = true;
+                }
+
+                break;
             }
+            case 2:
+            {
+                var dateString = args[0];
+                if (DateOnly.TryParseExact(
+                        dateString,
+                        new[] {Constants.DateFormatFormal, Constants.DateFormatNoDot},
+                        CultureInfo.CurrentCulture,
+                        DateTimeStyles.AllowWhiteSpaces,
+                        out var date))
+                {
+                    dates.Add(date);
+                }
+                else
+                {
+                    new ConsoleString($"Failed to parse date string '{dateString}'")
+                    {
+                        Foreground = ConsoleColor.Red,
+                        Background = ConsoleColor.Black,
+                    }.WriteLine();
+                    error = true;
+                }
+
+                dateString = args[1];
+                if (DateOnly.TryParseExact(
+                        dateString,
+                        new[] {Constants.DateFormatFormal, Constants.DateFormatNoDot},
+                        CultureInfo.CurrentCulture,
+                        DateTimeStyles.AllowWhiteSpaces,
+                        out date))
+                {
+                    var first = dates.First();
+                    while ((first = first.AddDays(1)) < date)
+                    {
+                        dates.Add(first);
+                    }
+                    dates.Add(date);
+                }
+                else
+                {
+                    new ConsoleString($"Failed to parse date string '{dateString}'")
+                    {
+                        Foreground = ConsoleColor.Red,
+                        Background = ConsoleColor.Black,
+                    }.WriteLine();
+                    error = true;
+                }
+
+                break;
+            }
+            default:
+                new ConsoleString($"Too many dates provided. Please provide either a single date or a range of dates.")
+                {
+                    Foreground = ConsoleColor.Red,
+                    Background = ConsoleColor.Black,
+                }.WriteLine();
+                return;
         }
 
         if (error)
+        {
             return;
+        }
 
         var logs = await GetLogLinesAsync(dates, cancellationToken);
 
@@ -82,10 +144,16 @@ public class EditCommand : IConsoleCommand
                 reopen = false;
                 await OpenInEditorAsync(tempFile, cancellationToken);
                 if (File.GetLastWriteTime(tempFile) <= lastWriteTime)
+                {
                     continue;
+                }
+
                 var result = await UpdateFromCsvAsync(cache, logs, tempFile, cancellationToken);
                 if (result is not EMergeResult.Reopen)
+                {
                     continue;
+                }
+
                 reopen        = true;
                 lastWriteTime = File.GetLastWriteTime(tempFile);
             } while (reopen);
@@ -139,6 +207,7 @@ public class EditCommand : IConsoleCommand
                         Project  = project.Title,
                         Message  = timeLog.Message,
                         Mode     = timeLog.Mode,
+                        SystemId = timeLog.Id,
                     });
                 previousTimeOnly = timeLog.TimeStamp.ToTimeOnly();
             }
@@ -282,11 +351,21 @@ public class EditCommand : IConsoleCommand
             await foreach (var row in reader.GetRecordsAsync<CsvRow>(_cancellationToken))
             {
                 var bestCandidate = await GetBestCandidateOrDefaultAsync(oldToNewTimeLogMapping, row);
-                var updatedTimeLog = bestCandidate.ShallowCopy();
+                var updatedTimeLog = bestCandidate?.ShallowCopy() ?? new TimeLog();
 
-                updatedTimeLog.Message   = row.Message;
-                updatedTimeLog.TimeStamp = row.Date.ToDateTime(row.Start);
-                updatedTimeLog.Mode      = row.Mode;
+                updatedTimeLog.Project    = await row.Project.Trim().GetProjectAsync(_cancellationToken);
+                updatedTimeLog.ProjectFk  = updatedTimeLog.Project.Id;
+                updatedTimeLog.Location   = await row.Location.Trim().GetLocationAsync(_cancellationToken);
+                updatedTimeLog.LocationFk = updatedTimeLog.Location.Id;
+                updatedTimeLog.Message    = row.Message;
+                updatedTimeLog.TimeStamp  = row.Date.ToDateTime(row.Start);
+                updatedTimeLog.Mode       = row.Mode;
+
+                if (bestCandidate is not null
+                    && updatedTimeLog.TimeStamp.Millisecond == 0
+                    && bestCandidate.TimeStamp.Millisecond != 0)
+                    updatedTimeLog.TimeStamp =
+                        updatedTimeLog.TimeStamp.AddMilliseconds(bestCandidate.TimeStamp.Millisecond);
 
                 var tuple = (row, updatedTimeLog);
                 if (bestCandidate is null)
@@ -394,7 +473,7 @@ public class EditCommand : IConsoleCommand
 
             var bestCandidate = candidates
                 .Where((q) => q.score > 2)
-                .OrderBy((q) => q.score)
+                .OrderByDescending((q) => q.score)
                 .Select((q) => q.timeLog)
                 .FirstOrDefault();
             return bestCandidate;
@@ -419,6 +498,8 @@ public class EditCommand : IConsoleCommand
                     continue;
                 var startTime = timeLog.TimeStamp.ToTimeOnly();
                 var score = 0.0;
+                if (row.SystemId == timeLog.Id)
+                    score += 10000;
                 if (endTime == row.End)
                     score += endTime is null ? 2 : 1;
                 if (startTime == row.Start)
@@ -428,6 +509,10 @@ public class EditCommand : IConsoleCommand
                 score += LevenshteinScore(project.Title, row.Project.Trim(), 3);
                 score += LevenshteinScore(location.Title, row.Location.Trim(), 3);
                 score += LevenshteinScore(timeLog.Message, row.Message.Trim(), 10);
+
+                // score += project.Title == row.Project.Trim() ? 10 : 0;
+                // score += location.Title == row.Location.Trim() ? 10 : 0;
+                // score += timeLog.Message == row.Message.Trim() ? 10 : 0;
                 candidates.Add((day, project, location, timeLog, score));
                 endTime = startTime;
             }
@@ -438,6 +523,8 @@ public class EditCommand : IConsoleCommand
         private static double LevenshteinScore(string left, string right, [ValueRange(1, int.MaxValue)] int impact)
         {
             var distance = Levenshtein.Distance(left, right);
+            if (distance == 0)
+                return impact;
             var score = (double) impact / distance;
             return Math.Min(1, score);
         }
@@ -446,14 +533,14 @@ public class EditCommand : IConsoleCommand
 
     private record CsvRow
     {
+        public int? SystemId { get; init; }
         public DateOnly Date { get; init; }
+        public ETimeLogMode Mode { get; init; }
         [Format("HH:mm:ss", "HH:mm")] public TimeOnly Start { get; init; }
         [Format("HH:mm:ss", "HH:mm")] public TimeOnly? End { get; init; }
-
         public string Location { get; init; } = string.Empty;
         public string Project { get; init; } = string.Empty;
         public string Message { get; init; } = string.Empty;
-        public ETimeLogMode Mode { get; init; }
     }
 
     private enum EMergeResult

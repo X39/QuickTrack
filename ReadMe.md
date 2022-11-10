@@ -2,7 +2,7 @@
 
 QuickTrack is a simple, easy to use, and free time tracking application.
 
-![Demo Video](.github/workflows/demo.mp4)
+![Demo Video](https://raw.githubusercontent.com/X39/QuickTrack/master/.github/demo.mp4)
 
 ## Features
 

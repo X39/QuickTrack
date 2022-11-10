@@ -22,12 +22,17 @@ public class TotalCommand : IConsoleCommand
     {
         var delta = TimeSpan.Zero;
         var referenceTime = TimeSpan.Zero;
+        var months = new List<MonthGroup>();
         await foreach (var month in QtRepository.GetDaysByMonth(cancellationToken)
                            .WithCancellation(cancellationToken))
         {
-            var days = month.Days;
+            months.Add(month);
+        }
+
+        foreach (var (month, year, days) in months.OrderBy((q) => q.Year).ThenBy((q) => q.Month))
+        {
             var (newReferenceTime, _, newDelta) = await GetTimeTotalOfRange(days, cancellationToken);
-            PrintInfo(newReferenceTime, newDelta, (month.Year, month.Month));
+            PrintInfo(newReferenceTime, newDelta, (Year: year, Month: month));
             delta         += newDelta;
             referenceTime += newReferenceTime;
         }
@@ -44,39 +49,66 @@ public class TotalCommand : IConsoleCommand
         var referenceTime = TimeSpan.FromHours(hoursPerDay * entries);
         var actualTime = TimeSpan.Zero;
         var today = DateTime.Today.ToDateOnly();
-        foreach (var (day, index) in days.Indexed())
+        foreach (var (day, index) in days.OrderBy((q) => q.Date.ToDateOnly()).Indexed())
         {
             var lines = await day.GetTimeLogsAsync(cancellationToken: cancellationToken);
             if (day.Date == today)
             {
                 lines = lines.Append(
-                    new TimeLog
-                    {
-                        Day = day,
-                        TimeStamp = DateTime.Now,
-                    })
+                        new TimeLog
+                        {
+                            Day       = day,
+                            TimeStamp = DateTime.Now,
+                        })
                     .ToImmutableArray();
             }
 
             DebugWriteLine(day.Date.ToString(), ConsoleColor.Cyan);
+            if (lines.None())
+            {
+                actualTime += TimeSpan.FromHours(hoursPerDay);
+                continue;
+            }
+
             var result = TimeSpan.Zero;
             var lastTimeStamp = lines.First().TimeStamp.RoundToMinutes();
+            bool wasPause = false;
             foreach (var q in lines)
             {
-                if (q.Mode == ETimeLogMode.Break)
+                var tmp = q.TimeStamp.RoundToMinutes();
+                if (wasPause)
+                {
+                    DebugWriteLine(
+                        $"referenceTime: {TimeSpan.FromHours(hoursPerDay * (index + 1))}, " +
+                        $"actualTime: {actualTime + result}, " +
+                        $"result: {result}, " +
+                        $"delta: {TimeSpan.FromHours(hoursPerDay * (index + 1)) - (actualTime + result)}, " +
+                        $"local-delta: {tmp - lastTimeStamp}");
+                    DebugWriteLine(q.ToString());
+                    lastTimeStamp = tmp;
+                    wasPause      = false;
                     continue;
-                DebugWriteLine(q.ToString());
+                }
+
+                if (q.Mode == ETimeLogMode.Break)
+                    wasPause = true;
+
+                result += tmp - lastTimeStamp;
                 DebugWriteLine(
                     $"referenceTime: {TimeSpan.FromHours(hoursPerDay * (index + 1))}, " +
                     $"actualTime: {actualTime + result}, " +
                     $"result: {result}, " +
-                    $"delta: {TimeSpan.FromHours(hoursPerDay * (index + 1)) - (actualTime + result)}");
-
-                var tmp = q.TimeStamp.RoundToMinutes();
-                result        += tmp - lastTimeStamp;
-                lastTimeStamp =  tmp;
+                    $"delta: {TimeSpan.FromHours(hoursPerDay * (index + 1)) - (actualTime + result)}, " +
+                    $"local-delta: {tmp - lastTimeStamp}");
+                lastTimeStamp = tmp;
+                DebugWriteLine(q.ToString());
             }
 
+            DebugWriteLine(
+                $"referenceTime: {TimeSpan.FromHours(hoursPerDay * (index + 1))}, " +
+                $"actualTime: {actualTime + result}, " +
+                $"result: {result}, " +
+                $"delta: {TimeSpan.FromHours(hoursPerDay * (index + 1)) - (actualTime + result)}");
             actualTime += result;
         }
 

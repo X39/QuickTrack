@@ -47,9 +47,7 @@ public class SapBbdExport : ExporterBase
                 .Select((q) => q.Date.Date.ToString("dd.MM"));
             // ReSharper disable once StringLiteralTypo
             var day = await DateTime.Today.ToDateOnly().GetDayAsync(this, cancellationToken);
-            var location = await QtRepository.GetLocationOrDefaultAsync(
-                               mostRecentTimeLog?.LocationFk,
-                               cancellationToken)
+            var location = Programm.Host.CurrentLocation
                            ?? await Prompt.ForLocationAsync(cancellationToken);
             var project = await Constants.ProjectForSapExport.GetProjectAsync(cancellationToken);
             await day.AppendTimeLogAsync(
@@ -66,12 +64,16 @@ public class SapBbdExport : ExporterBase
 
         var projectToStringMap = await MapMissingProjectsAsync(daysArray, cancellationToken)
             .ConfigureAwait(false);
+        var locations = await QtRepository.GetLocationsAsync(cancellationToken)
+            .ConfigureAwait(false);
+        var locationsMap = locations.ToDictionary((q) => q.Id);
         await EnsureBreaksAreAddedAsync(daysArray, formatter, cancellationToken)
             .ConfigureAwait(false);
         var instructions = new List<Instruction>();
         await foreach (var instruction in GatherInstructions(
                                daysArray,
                                projectToStringMap,
+                               locationsMap,
                                formatter,
                                cancellationToken)
                            .WithCancellation(cancellationToken)
@@ -131,8 +133,6 @@ public class SapBbdExport : ExporterBase
                 PrintRemainingTime(stack.Append(new Instruction {Timeout = timeout}), false);
                 Thread.Sleep(lTimeout);
             }
-
-            Console.WriteLine();
         }
     }
 
@@ -283,6 +283,7 @@ public class SapBbdExport : ExporterBase
     private async IAsyncEnumerable<Instruction> GatherInstructions(
         IReadOnlyCollection<Day> days,
         IReadOnlyDictionary<int, (string Project, string Profession, Project Entity)> projectToStringMap,
+        IReadOnlyDictionary<int, Location> locationsMap,
         ConsoleStringFormatter formatter,
         [EnumeratorCancellation] CancellationToken cancellationToken)
     {
@@ -315,6 +316,7 @@ public class SapBbdExport : ExporterBase
 
             await foreach (var instruction in GatherExportLogFileInstructions(
                                    projectToStringMap,
+                                   locationsMap,
                                    logFile,
                                    formatter,
                                    cancellationToken)
@@ -325,6 +327,7 @@ public class SapBbdExport : ExporterBase
 
     private async IAsyncEnumerable<Instruction> GatherExportLogFileInstructions(
         IReadOnlyDictionary<int, (string Project, string Profession, Project Entity)> projectToStringMap,
+        IReadOnlyDictionary<int, Location> locationsMap,
         Day day,
         ConsoleStringFormatter formatter,
         [EnumeratorCancellation] CancellationToken cancellationToken)
@@ -389,6 +392,15 @@ public class SapBbdExport : ExporterBase
             {
                 yield return Keyboard.Press.SpaceBar();
                 yield return Keyboard.Special.WriteDescription(projectToStringMap[value.ProjectFk].Entity, value);
+                yield return Keyboard.Press.Tab();
+                yield return GatherCommitTimeout();
+            }
+
+            yield return Keyboard.Press.RightArrow();
+            // ReSharper disable once StringLiteralTypo
+            {
+                yield return Keyboard.Press.SpaceBar();
+                yield return Keyboard.Special.WriteLocation(locationsMap[value.LocationFk]);
                 yield return Keyboard.Press.Tab();
                 yield return GatherCommitTimeout();
             }
@@ -505,6 +517,7 @@ public class SapBbdExport : ExporterBase
             public static Instruction Pos1() => For(EVirtualKeyCode.Pos1);
 
             public static Instruction DownArrow() => For(EVirtualKeyCode.DownArrow);
+            public static Instruction RightArrow() => For(EVirtualKeyCode.RightArrow);
             public static Instruction C() => For(EVirtualKeyCode.C);
         }
 
@@ -637,6 +650,11 @@ public class SapBbdExport : ExporterBase
             {
                 var msg = $"{project.Title}: {value.Message}";
                 return WriteText(msg);
+            }
+
+            public static Instruction WriteLocation(Location location)
+            {
+                return WriteText(location.Title);
             }
         }
     }

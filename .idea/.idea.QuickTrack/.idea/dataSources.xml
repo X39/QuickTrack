@@ -1,11 +1,11 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <project version="4">
   <component name="DataSourceManagerImpl" format="xml" multifile-model="true">
-    <data-source source="LOCAL" name="QuickTrack.db" uuid="396cd511-ef16-42a1-8553-13f356c171f2">
+    <data-source source="LOCAL" name="QuickTrack.db [Debug]" uuid="20152843-8d83-47e9-9c67-440b10a29129">
       <driver-ref>sqlite.xerial</driver-ref>
       <synchronize>true</synchronize>
       <jdbc-driver>org.sqlite.JDBC</jdbc-driver>
-      <jdbc-url>jdbc:sqlite:$USER_HOME$/OneDrive - SMF GmbH/Desktop/Times/QuickTrack.db</jdbc-url>
+      <jdbc-url>jdbc:sqlite:$PROJECT_DIR$/bin/Debug/net6.0/QuickTrack.db</jdbc-url>
       <working-dir>$ProjectFileDir$</working-dir>
     </data-source>
   </component>

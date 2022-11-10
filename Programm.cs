@@ -52,6 +52,8 @@ public static class Programm
             quickTrackHost.CommandParser.RegisterCommand<EditCommand>();
             quickTrackHost.CommandParser.RegisterCommand<TotalCommand>();
             quickTrackHost.CommandParser.RegisterCommand<ExportCommand>();
+            quickTrackHost.CommandParser.RegisterCommand<ProjectCommand>();
+            quickTrackHost.CommandParser.RegisterCommand<LocationCommand>();
 
             await quickTrackHost.RunAsync(CancellationTokenSource.Token);
         }
@@ -291,31 +293,79 @@ public static class Programm
         var today = await QtRepository.GetTodayAsync(null, cancellationToken);
         var yesterday = await today.GetRelativeDayAsync(-1, cancellationToken);
 
-        var logLines = today.GetTimeLogs(cancellationToken);
         await using var consoleStringFormatter = new ConsoleStringFormatter();
 
         TimeLog? lastLine = null;
+        TimeLog? previousProjectTimeLog = null;
         if (yesterday is not null)
         {
+            TimeLog? previous = null;
             await foreach (var timeLog in yesterday.GetTimeLogs(cancellationToken))
             {
-                lastLine = timeLog;
-                var consoleString = await timeLog.ToConsoleString(yesterday, consoleStringFormatter, cancellationToken);
+                if (previous is not null)
+                {
+                    var consoleString = await previous.ToConsoleString(
+                        yesterday,
+                        consoleStringFormatter,
+                        cancellationToken,
+                        timeLog);
+                    consoleString.WriteLine();
+                }
+
+                previous = lastLine = timeLog;
+                previousProjectTimeLog = timeLog.Mode == ETimeLogMode.Normal
+                    ? timeLog
+                    : previousProjectTimeLog;
+            }
+
+            if (previous is not null)
+            {
+                var consoleString = await previous.ToConsoleString(
+                    yesterday,
+                    consoleStringFormatter,
+                    cancellationToken);
                 consoleString.WriteLine();
             }
         }
 
-        await foreach (var timeLog in today.GetTimeLogs(cancellationToken))
         {
-            lastLine = timeLog;
-            var consoleString = await timeLog.ToConsoleString(today, consoleStringFormatter, cancellationToken);
-            consoleString.WriteLine();
+            TimeLog? previous = null;
+            await foreach (var timeLog in today.GetTimeLogs(cancellationToken))
+            {
+                if (previous is not null)
+                {
+                    var consoleString = await previous.ToConsoleString(
+                        today,
+                        consoleStringFormatter,
+                        cancellationToken,
+                        timeLog);
+                    consoleString.WriteLine();
+                }
+
+                previous = lastLine = timeLog;
+                previousProjectTimeLog = timeLog.Mode == ETimeLogMode.Normal
+                    ? timeLog
+                    : previousProjectTimeLog;
+            }
+
+            if (previous is not null)
+            {
+                var consoleString = await previous.ToConsoleString(
+                    today,
+                    consoleStringFormatter,
+                    cancellationToken);
+                consoleString.WriteLine();
+            }
         }
 
         if (lastLine is null)
             return null;
 
-        return (await consoleStringFormatter.GetProjectAsync(lastLine.ProjectFk, cancellationToken), lastLine);
+        return (
+            previousProjectTimeLog is not null
+                ? await consoleStringFormatter.GetProjectAsync(previousProjectTimeLog.ProjectFk, cancellationToken)
+                : null,
+            lastLine);
     }
 
     private static async Task<bool> EnsureDatabaseCreatedOrReturnFalseToExit(CancellationToken cancellationToken)
@@ -349,6 +399,18 @@ public static class Programm
 
             await using var dbContext = new QtContext();
             await dbContext.Database.MigrateAsync(cancellationToken);
+            do
+            {
+                new ConsoleString($"Do you want to perform a migration from the old flat-file format? (y/n)")
+                {
+                    Foreground = ConsoleColor.Cyan,
+                    Background = ConsoleColor.Black,
+                }.WriteLine();
+                answer = Console.ReadKey(true);
+            } while (answer.Key != ConsoleKey.Y && answer.Key != ConsoleKey.N);
+
+            if (answer.Key is ConsoleKey.N)
+                return true;
             await new Migrator().MigrateFromFlatFileAsync();
 
             return true;
@@ -408,7 +470,7 @@ public static class Programm
                     });
                 await dayJsonAttachment.UpdateAsync(default)
                     .ConfigureAwait(false);
-                
+
                 foreach (var logLine in existingLogFile.GetLines())
                 {
                     var project = await logLine.Project.Trim().GetProjectAsync();
@@ -432,18 +494,18 @@ public static class Programm
                     await projectJsonAttachment.UpdateAsync(default)
                         .ConfigureAwait(false);
                     await day.AppendTimeLogAsync(
-                        this,
-                        location,
-                        project,
-                        logLine.IsPause
-                            ? ETimeLogMode.Break
-                            : logLine.Message == "quit."
-                                ? ETimeLogMode.Quit
-                                : logLine.Project == "SAP-BBD"
-                                    ? ETimeLogMode.Export
-                                    : ETimeLogMode.Normal,
-                        logLine.Message,
-                        logLine.TimeStampStart)
+                            this,
+                            location,
+                            project,
+                            logLine.IsPause
+                                ? ETimeLogMode.Break
+                                : logLine.Message == "quit."
+                                    ? ETimeLogMode.Quit
+                                    : logLine.Project == "SAP-BBD"
+                                        ? ETimeLogMode.Export
+                                        : ETimeLogMode.Normal,
+                            logLine.Message,
+                            logLine.TimeStampStart)
                         .ConfigureAwait(false);
                 }
             }

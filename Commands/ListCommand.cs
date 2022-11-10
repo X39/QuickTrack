@@ -1,6 +1,7 @@
 using System.Collections.Immutable;
 using QuickTrack.Data.Database;
 using QuickTrack.Data.EntityFramework;
+using X39.Util.Console;
 
 namespace QuickTrack.Commands;
 
@@ -42,14 +43,34 @@ public class ListCommand : IConsoleCommand
 
         foreach (var day in days.OrderBy((q) => q.Date.ToDateOnly()))
         {
+            TimeLog? previous = null;
+            var timeSpan = TimeSpan.Zero;
             await foreach (var log in day.GetTimeLogs(cancellationToken)
                                .WithCancellation(cancellationToken)
                                .ConfigureAwait(false))
             {
-                var consoleString = await log.ToConsoleString(day, consoleStringFormatter, cancellationToken)
+                if (previous is not null)
+                {
+                    var consoleString = await previous.ToConsoleString(day, consoleStringFormatter, cancellationToken, log)
+                        .ConfigureAwait(false);
+                    consoleString.WriteLine();
+                    if (previous.Mode is not ETimeLogMode.Break)
+                        timeSpan += log.TimeStamp - previous.TimeStamp;
+                }
+
+                previous = log;
+            }
+            if (previous is not null)
+            {
+                var consoleString = await previous.ToConsoleString(day, consoleStringFormatter, cancellationToken, null)
                     .ConfigureAwait(false);
                 consoleString.WriteLine();
             }
+            new ConsoleString($"Total: {timeSpan}")
+            {
+                Foreground = ConsoleColor.DarkYellow,
+                Background = ConsoleColor.Black,
+            }.WriteLine();
         }
     }
 }

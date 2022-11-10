@@ -5,13 +5,13 @@ using X39.Util.Console;
 
 namespace QuickTrack.Commands;
 
-public class LocationCommand : IConsoleCommand
+public class ProjectCommand : IConsoleCommand
 {
-    public string[] Keys { get; } = {"loc", "location"};
+    public string[] Keys { get; } = {"project"};
 
-    public string Description => "Allows to list, change, show or set the current location.";
+    public string Description => "Allows to list, change, show or set the current project.";
 
-    public string Pattern => "( loc | location ) [ list | set | edit ]";
+    public string Pattern => "project [ list | set | edit ]";
 
     public async ValueTask ExecuteAsync(ImmutableArray<string> args, CancellationToken cancellationToken)
     {
@@ -20,36 +20,36 @@ public class LocationCommand : IConsoleCommand
         {
             default:
             case null:
-                new ConsoleString(Programm.Host.CurrentLocation?.Title ?? "<NULL>")
+                new ConsoleString(Programm.Host.CurrentProject?.Title ?? "<NULL>")
                 {
                     Foreground = ConsoleColor.Magenta,
                     Background = ConsoleColor.Black,
                 }.WriteLine();
                 return;
             case "list":
-                await ListLocationsAsync(cancellationToken);
+                await ListProjectsAsync(cancellationToken);
                 return;
             case "set":
-                await SetLocationAsync(cancellationToken);
+                await SetProjectAsync(cancellationToken);
                 return; 
             case "edit":
-                await EditLocationAsync(cancellationToken);
+                await EditProjectAsync(cancellationToken);
                 return; 
         }
     }
 
-    private async Task EditLocationAsync(CancellationToken cancellationToken)
+    private async Task EditProjectAsync(CancellationToken cancellationToken)
     {
-        var locations = await QtRepository.GetLocationsAsync(cancellationToken)
+        var projects = await QtRepository.GetProjectsAsync(cancellationToken)
             .ConfigureAwait(false);
-        new ConsoleString("Please choose a location to edit:")
+        new ConsoleString("Please choose a project to edit:")
         {
             Foreground = ConsoleColor.Magenta,
             Background = ConsoleColor.Black,
         }.WriteLine();
-        var location = AskConsole.ForValueFromCollection(
-            locations,
-            (location) => new ConsoleString(location.Title)
+        var project = AskConsole.ForValueFromCollection(
+            projects,
+            (project) => new ConsoleString(project.Title)
             {
                 Foreground = ConsoleColor.Magenta,
                 Background = ConsoleColor.Black,
@@ -72,24 +72,24 @@ public class LocationCommand : IConsoleCommand
             newTitle = Console.ReadLine() ?? string.Empty;
         } while (newTitle.IsNullOrWhiteSpace());
 
-        location.Title = newTitle;
-        await location.UpdateAsync(cancellationToken);
-        if (Programm.Host.CurrentLocation?.Id == location.Id)
-            Programm.Host.CurrentLocation = location;
+        project.Title = newTitle;
+        await project.UpdateAsync(cancellationToken);
+        if (Programm.Host.CurrentProject?.Id == project.Id)
+            Programm.Host.CurrentProject = project;
     }
 
-    private async Task ListLocationsAsync(CancellationToken cancellationToken)
+    private async Task ListProjectsAsync(CancellationToken cancellationToken)
     {
-        new ConsoleString("Available locations:")
+        new ConsoleString("Available projects:")
         {
             Foreground = ConsoleColor.Magenta,
             Background = ConsoleColor.Black,
         }.WriteLine();
-        await foreach (var location in QtRepository.GetLocations(cancellationToken)
+        await foreach (var project in QtRepository.GetProjects(cancellationToken)
                            .WithCancellation(cancellationToken)
                            .ConfigureAwait(false))
         {
-            new ConsoleString($"- {location.Title}")
+            new ConsoleString($"- {project.Title}")
             {
                 Foreground = ConsoleColor.Magenta,
                 Background = ConsoleColor.Black,
@@ -97,9 +97,9 @@ public class LocationCommand : IConsoleCommand
         }
     }
 
-    private async Task SetLocationAsync(CancellationToken cancellationToken)
+    private async Task SetProjectAsync(CancellationToken cancellationToken)
     {
-        var location = await Prompt.ForLocationAsync(cancellationToken);
-        Programm.Host.CurrentLocation = location;
+        var project = await Prompt.ForProjectAsync(cancellationToken);
+        Programm.Host.CurrentProject = project;
     }
 }

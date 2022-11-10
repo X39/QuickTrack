@@ -71,6 +71,7 @@ public static class QtRepository
         this string title,
         CancellationToken cancellationToken = default)
     {
+        title = title.Trim();
         await using var context = CreateContext();
         var single = await context.Locations
             .SingleOrDefaultAsync((location) => location.Title == title, cancellationToken);
@@ -91,6 +92,7 @@ public static class QtRepository
 
     public static async Task<Project> GetProjectAsync(this string title, CancellationToken cancellationToken = default)
     {
+        title = title.Trim();
         await using var context = CreateContext();
         var single = await context.Projects
             .SingleOrDefaultAsync((project) => project.Title == title, cancellationToken)
@@ -366,13 +368,21 @@ public static class QtRepository
             .ConfigureAwait(false);
         var now = DateTime.Now;
         timeStamp ??= now;
+        timeStamp = new DateTime(
+            timeStamp.Value.Year,
+            timeStamp.Value.Month,
+            timeStamp.Value.Day,
+            timeStamp.Value.Hour,
+            timeStamp.Value.Minute,
+            timeStamp.Value.Second,
+            timeStamp.Value.Millisecond);
         var timeLog = new TimeLog
         {
             DayFk      = day.Id,
             ProjectFk  = project.Id,
             LocationFk = location.Id,
             TimeStamp  = timeStamp.Value,
-            Message    = message,
+            Message    = string.Concat(message.Trim().TrimEnd('.'), '.'),
             Mode       = mode,
         };
         await dbContext.SaveChangesAsync(cancellationToken)
@@ -383,7 +393,7 @@ public static class QtRepository
             TimeStamp = now,
             Source    = source?.GetType().FullName() ?? string.Empty,
             Message = $"Added time log for {timeStamp} with location '{location.Title}' " +
-                      $"({location.Id}), project '{project.Title}' ({project.Id}) and message '{message}'",
+                      $"({location.Id}), project '{project.Title}' ({project.Id}) and message '{message}'.",
             Json = JsonSerializer.Serialize(timeLog),
             Kind = EAuditKind.LogLineAppended,
         };
@@ -409,6 +419,14 @@ public static class QtRepository
         await using var dbTransaction = await dbContext.Database.BeginTransactionAsync(cancellationToken)
             .ConfigureAwait(false);
         var now = DateTime.Now;
+        now = new DateTime(
+            now.Year,
+            now.Month,
+            now.Day,
+            now.Hour,
+            now.Minute,
+            now.Second,
+            now.Millisecond);
         await dbContext.SaveChangesAsync(cancellationToken)
             .ConfigureAwait(false);
         var audit = new Audit
@@ -416,8 +434,8 @@ public static class QtRepository
             DayFk     = day.Id,
             TimeStamp = now,
             Source    = source?.GetType().FullName() ?? string.Empty,
-            Message = message,
-            Kind = EAuditKind.Note,
+            Message   = message.Trim(),
+            Kind      = EAuditKind.Note,
         };
         await dbContext.Audits.AddAsync(audit, cancellationToken)
             .ConfigureAwait(false);
@@ -444,34 +462,109 @@ public static class QtRepository
         {
             if (propertyInfo.Name switch
                 {
-                    nameof(TimeLog.Id)      => true,
-                    nameof(TimeLog.DayFk)   => true,
-                    nameof(TimeLog.Day)     => true,
-                    nameof(TimeLog.Project) => true,
-                    _                       => false,
+                    nameof(TimeLog.Id)              => true,
+                    nameof(TimeLog.DayFk)           => true,
+                    nameof(TimeLog.Day)             => true,
+                    nameof(TimeLog.Project)         => true,
+                    nameof(TimeLog.Location)        => true,
+                    nameof(TimeLog.JsonAttachments) => true,
+                    _                               => false,
                 })
                 continue;
             var value = propertyInfo.GetValue(timeLog);
+            if (value is string s && propertyInfo.Name is nameof(TimeLog.Message))
+                value = string.Concat(s.Trim().TrimEnd('.'), '.');
             var existingValue = propertyInfo.GetValue(existing);
 
             if (existingValue is null && value is null
                 || existingValue is null && value is not null
                 || existingValue is not null && value is not null && existingValue.Equals(value))
                 continue;
-            var audit = new Audit
+            Audit audit;
+            if (existingValue is DateTimeOffset existingDateTimeOffset && value is DateTimeOffset valueDateTimeOffset)
             {
-                DayFk     = existing.DayFk,
-                TimeStamp = now,
-                Source    = source?.GetType().FullName() ?? string.Empty,
-                Message = $"Changing {propertyInfo.Name} of {existing.Id} ({existing.TimeStamp}) " +
-                          $"from '{existingValue}' to '{value}'",
-                Kind = EAuditKind.LogLineUpdated,
-            };
+                audit = new Audit
+                {
+                    DayFk     = existing.DayFk,
+                    TimeStamp = now,
+                    Source    = source?.GetType().FullName() ?? string.Empty,
+                    Message = $"Changing {propertyInfo.Name} of {existing.Id} ({existing.TimeStamp}) " +
+                              $"from '{existingDateTimeOffset:O}' to '{valueDateTimeOffset:O}'.",
+                    Kind = EAuditKind.LogLineUpdated,
+                };
+            }
+            else if (existingValue is DateTime existingDateTime && value is DateTime valueDateTime)
+            {
+                audit = new Audit
+                {
+                    DayFk     = existing.DayFk,
+                    TimeStamp = now,
+                    Source    = source?.GetType().FullName() ?? string.Empty,
+                    Message = $"Changing {propertyInfo.Name} of {existing.Id} ({existing.TimeStamp}) " +
+                              $"from '{existingDateTime:O}' to '{valueDateTime:O}'.",
+                    Kind = EAuditKind.LogLineUpdated,
+                };
+            }
+            else if (existingValue is TimeSpan existingTimeSpan && value is TimeSpan valueTimeSpan)
+            {
+                audit = new Audit
+                {
+                    DayFk     = existing.DayFk,
+                    TimeStamp = now,
+                    Source    = source?.GetType().FullName() ?? string.Empty,
+                    Message = $"Changing {propertyInfo.Name} of {existing.Id} ({existing.TimeStamp}) " +
+                              $"from '{existingTimeSpan:G}' to '{valueTimeSpan:G}'.",
+                    Kind = EAuditKind.LogLineUpdated,
+                };
+            }
+            else
+            {
+                audit = new Audit
+                {
+                    DayFk     = existing.DayFk,
+                    TimeStamp = now,
+                    Source    = source?.GetType().FullName() ?? string.Empty,
+                    Message = $"Changing {propertyInfo.Name} of {existing.Id} ({existing.TimeStamp}) " +
+                              $"from '{existingValue}' to '{value}'.",
+                    Kind = EAuditKind.LogLineUpdated,
+                };
+            }
+
             await context.Audits.AddAsync(audit, cancellationToken)
                 .ConfigureAwait(false);
             propertyInfo.SetValue(existing, value);
         }
 
+        await context.SaveChangesAsync(cancellationToken)
+            .ConfigureAwait(false);
+    }
+
+    public static async Task UpdateAsync(
+        this Location location,
+        CancellationToken cancellationToken = default)
+    {
+        await using var context = CreateContext();
+        var now = DateTime.Now;
+        var existing = await context.Locations.SingleOrDefaultAsync((q) => q.Id == location.Id, cancellationToken)
+            .ConfigureAwait(false);
+        if (existing is null)
+            throw new ArgumentException("The provided Location could not be found in the database.");
+        existing.Title = location.Title;
+        await context.SaveChangesAsync(cancellationToken)
+            .ConfigureAwait(false);
+    }
+
+    public static async Task UpdateAsync(
+        this Project project,
+        CancellationToken cancellationToken = default)
+    {
+        await using var context = CreateContext();
+        var now = DateTime.Now;
+        var existing = await context.Locations.SingleOrDefaultAsync((q) => q.Id == project.Id, cancellationToken)
+            .ConfigureAwait(false);
+        if (existing is null)
+            throw new ArgumentException("The provided Project could not be found in the database.");
+        existing.Title = project.Title;
         await context.SaveChangesAsync(cancellationToken)
             .ConfigureAwait(false);
     }
@@ -528,7 +621,7 @@ public static class QtRepository
             TimeStamp = DateTime.Now,
             Message =
                 $"Removing TimeLog {existing.Id} ({existing.TimeStamp}) with location '{existing.Location!.Title}' " +
-                $"({existing.Location.Id}), project '{existing.Project!.Title}' ({existing.Project.Id}) and message '{existing.Message}'",
+                $"({existing.Location.Id}), project '{existing.Project!.Title}' ({existing.Project.Id}) and message '{existing.Message}'.",
             Kind = EAuditKind.LogLineRemoved,
         };
         context.TimeLogs.Remove(existing);

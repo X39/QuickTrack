@@ -282,9 +282,15 @@ public class CommandParser
         var start = 0;
         for (var i = 0; i < input.Length; i++)
         {
-            if (input[i].IsWhiteSpace())
+            var c = input[i];
+            if (c is '\n')
+            {
+                lastBreak = 0;
+                spacing   = 0;
+            }
+            else if (c.IsWhiteSpace())
                 lastBreak = i;
-            else if (input[i].IsPunctuation())
+            else if (c.IsPunctuation())
                 lastBreak = i;
 
             spacing++;
