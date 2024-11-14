@@ -10,6 +10,7 @@ namespace QuickTrack.Commands;
 
 public class TotalCommand : IConsoleCommand
 {
+    const string TimeSpanFormat = @"dd\.hh\:mm";
     public string[] Keys { get; } = new[] {"total"};
 
     public string Description =>
@@ -20,24 +21,23 @@ public class TotalCommand : IConsoleCommand
 
     public async ValueTask ExecuteAsync(ImmutableArray<string> args, CancellationToken cancellationToken)
     {
-        var delta = TimeSpan.Zero;
+        var fullDelta = TimeSpan.Zero;
         var referenceTime = TimeSpan.Zero;
         var months = new List<MonthGroup>();
-        await foreach (var month in QtRepository.GetDaysByMonth(cancellationToken)
-                           .WithCancellation(cancellationToken))
+        await foreach (var month in QtRepository.GetDaysByMonth(cancellationToken))
         {
             months.Add(month);
         }
 
         foreach (var (month, year, days) in months.OrderBy((q) => q.Year).ThenBy((q) => q.Month))
         {
-            var (newReferenceTime, _, newDelta) = await GetTimeTotalOfRange(days, cancellationToken);
-            PrintInfo(newReferenceTime, newDelta, (Year: year, Month: month));
-            delta         += newDelta;
+            var (newReferenceTime, _, newDelta) =  await GetTimeTotalOfRange(days, cancellationToken);
+            fullDelta                           += newDelta;
+            PrintInfo(newReferenceTime, newDelta, fullDelta, (Year: year, Month: month));
             referenceTime += newReferenceTime;
         }
 
-        PrintInfo(referenceTime, delta);
+        PrintInfo(referenceTime, fullDelta, fullDelta, null);
     }
 
     private async Task<(TimeSpan referenceTime, TimeSpan actualTime, TimeSpan delta)> GetTimeTotalOfRange(
@@ -72,7 +72,7 @@ public class TotalCommand : IConsoleCommand
 
             var result = TimeSpan.Zero;
             var lastTimeStamp = lines.First().TimeStamp.RoundToMinutes();
-            bool wasPause = false;
+            var wasPause = false;
             foreach (var q in lines)
             {
                 var tmp = q.TimeStamp.RoundToMinutes();
@@ -90,7 +90,7 @@ public class TotalCommand : IConsoleCommand
                     continue;
                 }
 
-                if (q.Mode == ETimeLogMode.Break)
+                if (!q.Mode.IsCounted())
                     wasPause = true;
 
                 result += tmp - lastTimeStamp;
@@ -125,11 +125,79 @@ public class TotalCommand : IConsoleCommand
         }.WriteLine();
     }
 
-    private static void PrintInfo(TimeSpan referenceTime, TimeSpan delta, (int Year, int Month)? tuple = default)
+    private static void PrintInfo(
+        TimeSpan referenceTime,
+        TimeSpan individualDelta,
+        TimeSpan fullDelta,
+        (int Year, int Month)? tuple = default)
     {
+        static void WriteTime(TimeSpan timeSpan, string prefix = "", string suffix = "", bool includeSign = false)
+        {
+            var color = timeSpan > TimeSpan.Zero
+                ? ConsoleColor.Red
+                : timeSpan < TimeSpan.Zero
+                    ? ConsoleColor.Green
+                    : ConsoleColor.Yellow;
+            if (prefix.IsNotNullOrWhiteSpace())
+            {
+                new ConsoleString(prefix)
+                {
+                    Foreground = color,
+                    Background = ConsoleColor.Black,
+                }.Write();
+            }
+
+            if (includeSign)
+            {
+                new ConsoleString(timeSpan > TimeSpan.Zero ? "-" : "+")
+                {
+                    Foreground = color,
+                    Background = ConsoleColor.Black,
+                }.Write();
+            }
+
+            new ConsoleString(timeSpan.ToString(TimeSpanFormat))
+            {
+                Foreground = color,
+                Background = ConsoleColor.Black,
+            }.Write();
+            if (suffix.IsNotNullOrWhiteSpace())
+            {
+                new ConsoleString(suffix)
+                {
+                    Foreground = color,
+                    Background = ConsoleColor.Black,
+                }.Write();
+            }
+        }
+
+        individualDelta = individualDelta.RoundToMinutes();
+        fullDelta       = fullDelta.RoundToMinutes();
         if (tuple is not null)
         {
-            new ConsoleString($"[{tuple.Value.Month:00}.{tuple.Value.Year:0000}] With the mandatory time of ")
+            new ConsoleString($"[{tuple.Value.Month:00}.{tuple.Value.Year:0000}] ")
+            {
+                Foreground = ConsoleColor.White,
+                Background = ConsoleColor.Black,
+            }.Write();
+
+            new ConsoleString("Of the mandatory time ")
+            {
+                Foreground = ConsoleColor.White,
+                Background = ConsoleColor.Black,
+            }.Write();
+            new ConsoleString(referenceTime.ToString(TimeSpanFormat))
+            {
+                Foreground = ConsoleColor.Yellow,
+                Background = ConsoleColor.Black,
+            }.Write();
+            new ConsoleString(" you have a time delta of ")
+            {
+                Foreground = ConsoleColor.White,
+                Background = ConsoleColor.Black,
+            }.Write();
+            WriteTime(fullDelta, includeSign: true);
+            new ConsoleString(". ")
             {
                 Foreground = ConsoleColor.White,
                 Background = ConsoleColor.Black,
@@ -142,75 +210,78 @@ public class TotalCommand : IConsoleCommand
                 Foreground = ConsoleColor.White,
                 Background = ConsoleColor.Black,
             }.Write();
+            new ConsoleString(referenceTime.ToString(TimeSpanFormat))
+            {
+                Foreground = ConsoleColor.Yellow,
+                Background = ConsoleColor.Black,
+            }.Write();
+            new ConsoleString(" you have a time delta of ")
+            {
+                Foreground = ConsoleColor.White,
+                Background = ConsoleColor.Black,
+            }.Write();
+            WriteTime(fullDelta, includeSign: true);
+            new ConsoleString(" as of now. ")
+            {
+                Foreground = ConsoleColor.White,
+                Background = ConsoleColor.Black,
+            }.Write();
         }
 
-        new ConsoleString(referenceTime.ToString("dd\\.hh\\:mm\\:ss"))
+        switch (tuple)
         {
-            Foreground = ConsoleColor.Yellow,
-            Background = ConsoleColor.Black,
-        }.Write();
-        new ConsoleString(" you have ")
-        {
-            Foreground = ConsoleColor.White,
-            Background = ConsoleColor.Black,
-        }.Write();
-        if (delta < TimeSpan.Zero)
-        {
-            new ConsoleString(delta.ToString("dd\\.hh\\:mm\\:ss"))
-            {
-                Foreground = ConsoleColor.Green,
-                Background = ConsoleColor.Black,
-            }.Write();
-            if (tuple is null)
-            {
-                new ConsoleString(" additionally spent if ending your day now.")
-                {
-                    Foreground = ConsoleColor.White,
-                    Background = ConsoleColor.Black,
-                }.WriteLine();
-            }
-            else
-            {
-                new ConsoleString(" gained.")
-                {
-                    Foreground = ConsoleColor.White,
-                    Background = ConsoleColor.Black,
-                }.WriteLine();
-            }
-        }
-        else
-        {
-            new ConsoleString(delta.ToString("dd\\.hh\\:mm\\:ss"))
-            {
-                Foreground = ConsoleColor.Red,
-                Background = ConsoleColor.Black,
-            }.Write();
-            if (tuple is null)
-            {
-                new ConsoleString($" remaining (")
+            case null when individualDelta < TimeSpan.Zero:
+                break;
+            case null when individualDelta > TimeSpan.Zero:
+                new ConsoleString($"The delta will amount to zero at ")
                 {
                     Foreground = ConsoleColor.White,
                     Background = ConsoleColor.Black,
                 }.Write();
-                new ConsoleString($"{(DateTime.Now + delta).ToTimeOnly()}")
+                new ConsoleString($"{(DateTime.Now + individualDelta).ToTimeOnly()}")
                 {
                     Foreground = ConsoleColor.Red,
                     Background = ConsoleColor.Black,
                 }.Write();
-                new ConsoleString($") if ending your day now.")
+                new ConsoleString($".")
                 {
                     Foreground = ConsoleColor.White,
                     Background = ConsoleColor.Black,
-                }.WriteLine();
-            }
-            else
-            {
-                new ConsoleString(" remaining.")
+                }.Write();
+                break;
+            case null:
+                new ConsoleString($" No change to time balance is done if ending your day now.")
                 {
                     Foreground = ConsoleColor.White,
                     Background = ConsoleColor.Black,
-                }.WriteLine();
-            }
+                }.Write();
+                break;
+            case not null when individualDelta < TimeSpan.Zero:
+                WriteTime(individualDelta);
+                new ConsoleString(" added to time delta.")
+                {
+                    Foreground = ConsoleColor.White,
+                    Background = ConsoleColor.Black,
+                }.Write();
+                break;
+            case not null when individualDelta > TimeSpan.Zero:
+                WriteTime(individualDelta);
+                new ConsoleString(" removed from time delta.")
+                {
+                    Foreground = ConsoleColor.White,
+                    Background = ConsoleColor.Black,
+                }.Write();
+                break;
+            case not null:
+                WriteTime(individualDelta);
+                new ConsoleString(" or in words nothing was changed.")
+                {
+                    Foreground = ConsoleColor.White,
+                    Background = ConsoleColor.Black,
+                }.Write();
+                break;
         }
+
+        Console.WriteLine();
     }
 }

@@ -996,7 +996,7 @@ public enum EVirtualKeyCode
     ///<sumary>
     ///Right SHIFT key
     ///</sumary>
-    RSHIFT = 0xA1,
+    RightShift = 0xA1,
 
     ///<sumary>
     ///Left CONTROL key
@@ -1006,7 +1006,7 @@ public enum EVirtualKeyCode
     ///<sumary>
     ///Right CONTROL key
     ///</sumary>
-    RCONTROL = 0xA3,
+    RightControl = 0xA3,
 
     ///<sumary>
     ///Left MENU key

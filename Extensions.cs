@@ -18,7 +18,7 @@ public static class Extensions
         var timeCurrent = timeLogCurrent.TimeStamp.ToString("HH:mm");
         var timeNext = timeLogNext?.TimeStamp.ToString("HH:mm") ?? "--:--";
         var prefix = ConsoleStringFormatter.ToConsoleOutputPrefixString(day);
-        return timeLogCurrent.Mode == ETimeLogMode.Break
+        return !timeLogCurrent.Mode.IsCounted()
             ? new ConsoleString
             {
                 Text       = string.Concat(prefix, '[', timeCurrent, " - ", timeNext, ']', consoleString),
@@ -40,4 +40,11 @@ public static class Extensions
         self.Hour,
         self.Minute,
         0);
+    
+    public static TimeSpan RoundToMinutes(this TimeSpan self) => new(
+        self.Days,
+        self.Hours,
+        self.Minutes,
+        seconds: 0,
+        milliseconds: 0);
 }

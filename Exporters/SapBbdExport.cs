@@ -11,10 +11,13 @@ namespace QuickTrack.Exporters;
 
 public class SapBbdExport : ExporterBase
 {
-    private static readonly TimeSpan SafetyTimeout = new(0, 0, 0, 0, 50);
-    private static readonly TimeSpan CommitTimeout = new(0, 0, 0, 2, 500);
+    private const  bool     AppendTimeTrackingLogLine = true;
+    private static TimeSpan SafetyTimeout             = new(0, 0, 0, 0, 100);
+    private static TimeSpan CommitTimeout             = new(0, 0, 0, 2, 100);
     public override string Identifier => "sap";
-    protected override string ArgsPattern { get; } = string.Empty;
+
+    protected override string ArgsPattern { get; } =
+        "[snake|very slow|slow|slower|normal|faster|fast] [time-adjustment <hh:mm:ss> <reason>]";
 
     public override string HelpText { get; } = "Exports (blocking) the log files " +
                                                "using a keyboard and a browser as tool.";
@@ -38,6 +41,124 @@ public class SapBbdExport : ExporterBase
         string[] args,
         CancellationToken cancellationToken)
     {
+        for (var index = 0; index < args.Length; index++)
+        {
+            var arg = args[index];
+            switch (arg.ToLowerInvariant())
+            {
+                case "snake":
+                case "very slow":
+                    SafetyTimeout = new(0, 0, 0, 0, 250);
+                    CommitTimeout = new(0, 0, 0, 5, 0);
+                    break;
+                case "slow":
+                    SafetyTimeout = new(0, 0, 0, 0, 125);
+                    CommitTimeout = new(0, 0, 0, 4, 0);
+                    break;
+                case "slower":
+                    SafetyTimeout = new(0, 0, 0, 0, 100);
+                    CommitTimeout = new(0, 0, 0, 3, 0);
+                    break;
+                case "normal":
+                    SafetyTimeout = new(0, 0, 0, 0, 75);
+                    CommitTimeout = new(0, 0, 0, 2, 500);
+                    break;
+                case "faster":
+                    SafetyTimeout = new(0, 0, 0, 0, 50);
+                    CommitTimeout = new(0, 0, 0, 2, 0);
+                    break;
+                case "fast":
+                    SafetyTimeout = new(0, 0, 0, 0, 25);
+                    CommitTimeout = new(0, 0, 0, 1, 0);
+                    break;
+
+                case "time-adjustment" when index + 2 < args.Length:
+                    var timeAdjustment = TimeSpan.TryParseExact(
+                        args[index + 1],
+                        "hh\\:mm\\:ss",
+                        null,
+                        out var parsedTimeAdjustment)
+                        ? parsedTimeAdjustment
+                        : TimeSpan.TryParseExact(
+                            args[index + 1],
+                            "hh\\:mm",
+                            null,
+                            out parsedTimeAdjustment)
+                            ? parsedTimeAdjustment
+                            : TimeSpan.TryParseExact(
+                                args[index + 1],
+                                "hhmmss",
+                                null,
+                                out parsedTimeAdjustment)
+                                ? parsedTimeAdjustment
+                                : TimeSpan.TryParseExact(
+                                    args[index + 1],
+                                    "hhmm",
+                                    null,
+                                    out parsedTimeAdjustment)
+                                    ? parsedTimeAdjustment
+                                    : TimeSpan.Zero;
+                    var reason = args[index + 2];
+                    if (timeAdjustment == TimeSpan.Zero)
+                    {
+                        new ConsoleString(
+                                    $"Could not parse time adjustment '{args[index + 1]}'")
+                                {Background = ConsoleColor.DarkRed, Foreground = ConsoleColor.White}
+                            .WriteLine();
+                        break;
+                    }
+
+                    if (reason.IsNullOrWhiteSpace())
+                    {
+                        new ConsoleString(
+                                    $"No reason given for time adjustment '{args[index + 1]}'")
+                                {Background = ConsoleColor.DarkRed, Foreground = ConsoleColor.White}
+                            .WriteLine();
+                        break;
+                    }
+
+                    index += 2;
+                    if (timeAdjustment != TimeSpan.Zero)
+                    {
+                        foreach (var day in days)
+                        {
+                            var jsonAttachment = await day.GetJsonAttachmentAsync(
+                                    typeof(SapBbdExport).FullName(),
+                                    cancellationToken)
+                                .ConfigureAwait(false);
+                            await jsonAttachment.WithDoAsync(
+                                    // ReSharper disable once VariableHidesOuterVariable
+                                    (JsonDayPayload payload, CancellationToken _) =>
+                                    {
+                                        if (payload.TimeAdjustment is null)
+                                            payload.TimeAdjustment = timeAdjustment;
+                                        else
+                                        {
+                                            new ConsoleString(
+                                                        $"Time adjustment already set to {payload.TimeAdjustment}")
+                                                    {Background = ConsoleColor.DarkRed, Foreground = ConsoleColor.White}
+                                                .WriteLine();
+                                        }
+
+                                        if (payload.Reason is null)
+                                            payload.Reason = reason;
+                                        else
+                                            payload.Reason += $"; {reason}";
+
+                                        return ValueTask.CompletedTask;
+                                    },
+                                    cancellationToken)
+                                .ConfigureAwait(false);
+                            await jsonAttachment.UpdateAsync(cancellationToken)
+                                .ConfigureAwait(false);
+                            break;
+                        }
+                    }
+
+                    break;
+            }
+        }
+
         var daysArray = days as Day[] ?? days.ToArray();
         TimeLog? mostRecentTimeLog;
         if (AppendTimeTrackingLogLine)
@@ -81,6 +202,7 @@ public class SapBbdExport : ExporterBase
         {
             instructions.Add(instruction);
         }
+
         PrintTotalTimeRequired(instructions);
         PrintPreparationsHint(daysArray);
         ExecuteInstructions(instructions);
@@ -104,8 +226,6 @@ public class SapBbdExport : ExporterBase
             Background = ConsoleColor.Black,
         }.WriteLine();
     }
-
-    private const bool AppendTimeTrackingLogLine = true;
 
     private static void ExecuteInstructions(IEnumerable<Instruction> instructions)
     {
@@ -263,12 +383,19 @@ public class SapBbdExport : ExporterBase
         var yieldHelper = new YieldHelperForMandatoryBreak(formatter);
         var index = 0;
         TimeLog? previous = null;
+        var jsonAttachment = await day.GetJsonAttachmentAsync(
+                typeof(SapBbdExport).FullName(),
+                cancellationToken)
+            .ConfigureAwait(false);
+        var timeAdjustment = await jsonAttachment.WithDoAsync(
+            (JsonDayPayload payload, CancellationToken _) => ValueTask.FromResult(payload.TimeAdjustment),
+            cancellationToken);
         await foreach (var timeLog in yieldHelper.GetLinesWithMandatoryBreak(day, cancellationToken)
                            .WithCancellation(cancellationToken))
         {
             if (previous is not null)
             {
-                yield return (previous, timeLog.TimeStamp, index++);
+                yield return (previous, timeLog.TimeStamp + (timeAdjustment ?? TimeSpan.Zero), index++);
             }
 
             previous = timeLog;
@@ -339,7 +466,7 @@ public class SapBbdExport : ExporterBase
             yield return GatherDebugLine($"Exporting Line: {value}");
             if (endTime is null)
                 break;
-            if (value.Mode == ETimeLogMode.Break)
+            if (value.Mode.IsNotExported())
                 continue;
             if (index != 0)
             {
@@ -348,29 +475,31 @@ public class SapBbdExport : ExporterBase
             }
 
 
-            // ReSharper disable once StringLiteralTypo
             {
                 yield return Keyboard.Press.SpaceBar();
                 yield return Keyboard.Special.WriteProject(projectToStringMap, value);
                 yield return GatherCommitTimeout();
                 yield return GatherCommitTimeout();
+                yield return GatherCommitTimeout();
+                yield return GatherCommitTimeout();
                 yield return Keyboard.Press.Enter();
                 yield return GatherCommitTimeout();
             }
 
             yield return Keyboard.Press.Tab();
-            // ReSharper disable once StringLiteralTypo
             {
                 yield return Keyboard.Press.SpaceBar();
                 yield return Keyboard.Special.WriteProfession(projectToStringMap, value);
                 yield return GatherCommitTimeout();
+                yield return GatherCommitTimeout();
+                yield return GatherCommitTimeout();
+                yield return GatherCommitTimeout();
                 yield return Keyboard.Press.Enter();
                 yield return GatherCommitTimeout();
             }
 
             yield return Keyboard.Press.Tab();
             yield return Keyboard.Press.Tab();
-            // ReSharper disable once StringLiteralTypo
             {
                 yield return Keyboard.Press.SpaceBar();
                 yield return Keyboard.Special.WriteStartTime(value);
@@ -379,7 +508,6 @@ public class SapBbdExport : ExporterBase
             }
 
             yield return Keyboard.Press.Tab();
-            // ReSharper disable once StringLiteralTypo
             {
                 yield return Keyboard.Press.SpaceBar();
                 yield return Keyboard.Special.WriteEndTime(endTime.Value);
@@ -388,7 +516,6 @@ public class SapBbdExport : ExporterBase
             }
 
             yield return Keyboard.Press.Tab();
-            // ReSharper disable once StringLiteralTypo
             {
                 yield return Keyboard.Press.SpaceBar();
                 yield return Keyboard.Special.WriteDescription(projectToStringMap[value.ProjectFk].Entity, value);
@@ -396,14 +523,13 @@ public class SapBbdExport : ExporterBase
                 yield return GatherCommitTimeout();
             }
 
-            yield return Keyboard.Press.RightArrow();
-            // ReSharper disable once StringLiteralTypo
-            {
-                yield return Keyboard.Press.SpaceBar();
-                yield return Keyboard.Special.WriteLocation(locationsMap[value.LocationFk]);
-                yield return Keyboard.Press.Tab();
-                yield return GatherCommitTimeout();
-            }
+            // yield return Keyboard.Press.RightArrow();
+            // {
+            //     yield return Keyboard.Press.SpaceBar();
+            //     yield return Keyboard.Special.WriteLocation(locationsMap[value.LocationFk]);
+            //     yield return Keyboard.Press.Tab();
+            //     yield return GatherCommitTimeout();
+            // }
         }
     }
 
@@ -659,9 +785,10 @@ public class SapBbdExport : ExporterBase
         }
     }
 
-    private static async Task<Dictionary<int, (string Project, string Profession, Project Entity)>> MapMissingProjectsAsync(
-        IEnumerable<Day> days,
-        CancellationToken cancellationToken)
+    private static async Task<Dictionary<int, (string Project, string Profession, Project Entity)>>
+        MapMissingProjectsAsync(
+            IEnumerable<Day> days,
+            CancellationToken cancellationToken)
     {
         var projectToStringMap = new Dictionary<int, (string Project, string Profession, Project Entity)>();
         foreach (var day in days)
@@ -671,10 +798,12 @@ public class SapBbdExport : ExporterBase
             {
                 if (projectToStringMap.ContainsKey(timeLog.ProjectFk))
                     continue;
-                if (timeLog.Mode == ETimeLogMode.Break)
+                if (timeLog.Mode.IsNotExported())
                     continue;
                 var project = await timeLog.GetProjectAsync(cancellationToken: cancellationToken);
-                var jsonAttachment = await project.GetJsonAttachment(typeof(SapBbdExport).FullName(), cancellationToken)
+                var jsonAttachment = await project.GetJsonAttachmentAsync(
+                        typeof(SapBbdExport).FullName(),
+                        cancellationToken)
                     .ConfigureAwait(false);
                 await jsonAttachment.WithDoAsync(
                         // ReSharper disable once VariableHidesOuterVariable
@@ -684,7 +813,8 @@ public class SapBbdExport : ExporterBase
                                 payload.ProjectCode = AskForProject(project);
                             if (payload.ProfessionCode.IsNullOrWhiteSpace())
                                 payload.ProfessionCode = AskForProfession(project);
-                            projectToStringMap[timeLog.ProjectFk] = (payload.ProjectCode, payload.ProfessionCode, project);
+                            projectToStringMap[timeLog.ProjectFk] =
+                                (payload.ProjectCode, payload.ProfessionCode, project);
                             return ValueTask.CompletedTask;
                         },
                         cancellationToken)
@@ -701,6 +831,12 @@ public class SapBbdExport : ExporterBase
     {
         public string? ProjectCode { get; set; }
         public string? ProfessionCode { get; set; }
+    }
+
+    public class JsonDayPayload
+    {
+        public TimeSpan? TimeAdjustment { get; set; }
+        public string? Reason { get; set; }
     }
 
     private static string AskForProject(Project project)

@@ -41,9 +41,43 @@ public class QuickTrackHost
                 () => "quit | end | exit",
                 "Writes 'end of day' message and terminates the program. If a message is provided, it will be logged.",
                 QuitProgram));
+        CommandParser.RegisterCommand(
+            new FluentConsoleCommand(
+                new[] {"quit-half", "end-half", "exit-half"},
+                () => "quit-half | end-half | exit-half",
+                "Writes OffTime event of 4h and a 'end of day' message and terminates the program. If a message is provided, it will be logged.",
+                QuitHalfProgram));
         CurrentProject    = lastTimeLogLine?.Project;
         _lastLog        = lastTimeLogLine?.TimeLog;
         CurrentLocation = startLocation;
+    }
+
+    public async ValueTask QuitHalfProgram(ImmutableArray<string> args, CancellationToken cancellationToken)
+    {
+        var message = Constants.MessageForQuit;
+        if (args.Any())
+            message = string.Join(" ", args);
+        var day = await DateTime.Today.ToDateOnly().GetDayAsync(this, cancellationToken);
+        var project = await Constants.ProjectForQuit.GetProjectAsync(cancellationToken);
+        var location = CurrentLocation ?? await Prompt.ForLocationAsync(cancellationToken);
+        var now = DateTime.Now;
+        await day.AppendTimeLogAsync(
+            this,
+            location,
+            project,
+            ETimeLogMode.OffTime,
+            message,
+            timeStamp: now,
+            cancellationToken: cancellationToken);
+        await day.AppendTimeLogAsync(
+            this,
+            location,
+            project,
+            ETimeLogMode.Quit,
+            message,
+            timeStamp: now.AddHours(4),
+            cancellationToken: cancellationToken);
+        Programm.Quit(Constants.ErrorCodes.Ok);
     }
 
     public async ValueTask QuitProgram(ImmutableArray<string> args, CancellationToken cancellationToken)

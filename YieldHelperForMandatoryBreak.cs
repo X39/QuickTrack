@@ -95,7 +95,7 @@ public class YieldHelperForMandatoryBreak
     private static TimeSpan GetTotalPause(IEnumerable<(TimeLog timeLog, TimeSpan? timeSpan)> tuples)
     {
         return tuples
-            .Where((q) => q.timeLog.Mode == ETimeLogMode.Break)
+            .Where((q) => !q.timeLog.Mode.IsCounted())
             .Select((q) => q.timeSpan)
             .NotNull()
             .DefaultIfEmpty(TimeSpan.Zero)
@@ -264,7 +264,7 @@ public class YieldHelperForMandatoryBreak
         CancellationToken cancellationToken)
     {
         var jsonAttachment = await day
-            .GetJsonAttachment(typeof(YieldHelperForMandatoryBreak).FullName(), cancellationToken)
+            .GetJsonAttachmentAsync(typeof(YieldHelperForMandatoryBreak).FullName(), cancellationToken)
             .ConfigureAwait(false);
 
         async ValueTask<TimeLog> Func(JsonPayload jsonPayload, CancellationToken token)

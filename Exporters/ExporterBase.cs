@@ -65,7 +65,12 @@ public abstract class ExporterBase
         }
         if (!DateOnly.TryParseExact(
                 args[0],
-                new []{Constants.DateFormatFormal, Constants.DateFormatNoDot},
+                new []{
+                            Constants.DateFormatFormal,
+                            Constants.DateFormatNoDot,
+                            Constants.FullDateFormatFormal,
+                            Constants.FullDateFormatNoDot
+                        },
                 CultureInfo.CurrentCulture,
                 DateTimeStyles.AllowWhiteSpaces,
                 out var startDate))
@@ -82,7 +87,12 @@ public abstract class ExporterBase
         argSkip++;
         if (args.Length < 2 || !DateOnly.TryParseExact(
                 args[1],
-                new []{Constants.DateFormatFormal, Constants.DateFormatNoDot},
+                new []{
+                            Constants.DateFormatFormal,
+                            Constants.DateFormatNoDot,
+                            Constants.FullDateFormatFormal,
+                            Constants.FullDateFormatNoDot
+                        },
                 CultureInfo.CurrentCulture,
                 DateTimeStyles.AllowWhiteSpaces,
                 out var endDate))

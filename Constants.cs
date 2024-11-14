@@ -4,6 +4,8 @@ public static class Constants
 {
     public const string DateFormatFormal = "dd.MM";
     public const string DateFormatNoDot  = "ddMM";
+    public const string FullDateFormatFormal = "dd.MM.yyyy";
+    public const string FullDateFormatNoDot  = "ddMMyy";
 
     public const string MessageForQuit      = "quit";
     public const string ProjectForQuit      = "quit";

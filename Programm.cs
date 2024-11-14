@@ -49,11 +49,13 @@ public static class Programm
             quickTrackHost.CommandParser.RegisterCommand<UndoCommand>();
             quickTrackHost.CommandParser.RegisterCommand<ListCommand>();
             quickTrackHost.CommandParser.RegisterCommand<SearchCommand>();
+            quickTrackHost.CommandParser.RegisterCommand<SearchProjectCommand>();
             quickTrackHost.CommandParser.RegisterCommand<EditCommand>();
             quickTrackHost.CommandParser.RegisterCommand<TotalCommand>();
             quickTrackHost.CommandParser.RegisterCommand<ExportCommand>();
             quickTrackHost.CommandParser.RegisterCommand<ProjectCommand>();
             quickTrackHost.CommandParser.RegisterCommand<LocationCommand>();
+            quickTrackHost.CommandParser.RegisterCommand<RdpActiveCommand>();
 
             await quickTrackHost.RunAsync(CancellationTokenSource.Token);
         }
@@ -447,7 +449,7 @@ public static class Programm
                 await day.AppendAuditAsync(this, EAuditKind.Note, "Migrating from flat-file.", CancellationToken.None)
                     .ConfigureAwait(false);
 
-                var dayJsonAttachment = await day.GetJsonAttachment(typeof(SapBbdExport).FullName())
+                var dayJsonAttachment = await day.GetJsonAttachmentAsync(typeof(SapBbdExport).FullName())
                     .ConfigureAwait(false);
                 await dayJsonAttachment.WithDoAsync(
                     (YieldHelperForMandatoryBreak.JsonPayload payload, CancellationToken _) =>
@@ -474,7 +476,7 @@ public static class Programm
                 foreach (var logLine in existingLogFile.GetLines())
                 {
                     var project = await logLine.Project.Trim().GetProjectAsync();
-                    var projectJsonAttachment = await project.GetJsonAttachment(typeof(SapBbdExport).FullName())
+                    var projectJsonAttachment = await project.GetJsonAttachmentAsync(typeof(SapBbdExport).FullName())
                         .ConfigureAwait(false);
                     await projectJsonAttachment.WithDoAsync(
                         (SapBbdExport.JsonPayload payload, CancellationToken _) =>

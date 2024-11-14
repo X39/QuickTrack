@@ -131,6 +131,28 @@ public static class QtRepository
     }
 
     public static async Task<Project?> GetProjectOrDefaultAsync(
+        this string projectName,
+        CancellationToken cancellationToken = default)
+    {
+        await using var context = CreateContext();
+        var single = await context.Projects
+            .SingleOrDefaultAsync((day) => day.Title == projectName, cancellationToken)
+            .ConfigureAwait(false);
+        return single;
+    }
+
+    public static async Task<Location?> GetLocationOrDefaultAsync(
+        this string locationName,
+        CancellationToken cancellationToken = default)
+    {
+        await using var context = CreateContext();
+        var single = await context.Locations
+            .SingleOrDefaultAsync((day) => day.Title == locationName, cancellationToken)
+            .ConfigureAwait(false);
+        return single;
+    }
+
+    public static async Task<Project?> GetProjectOrDefaultAsync(
         int? projectId,
         CancellationToken cancellationToken = default)
     {
@@ -206,7 +228,7 @@ public static class QtRepository
     {
         await using var context = CreateContext();
         var range = await context.Locations
-            .OrderBy((q) => q.Title)
+            .OrderBy((q) => q.Title.ToLower())
             .ToArrayAsync(cancellationToken)
             .ConfigureAwait(false);
         return range.ToImmutableArray();
@@ -217,9 +239,10 @@ public static class QtRepository
     {
         await using var context = CreateContext();
         var range = context.Projects
-            .OrderBy((q) => q.Title)
+            .OrderBy((q) => q.Title.ToLower())
             .AsAsyncEnumerable();
-        await foreach (var project in range.WithCancellation(cancellationToken)
+        await foreach (var project in range
+                           .WithCancellation(cancellationToken)
                            .ConfigureAwait(false))
         {
             yield return project;
@@ -293,6 +316,62 @@ public static class QtRepository
                            .ConfigureAwait(false))
         {
             yield return timeLog;
+        }
+    }
+
+    public static async Task<bool> HasTimeLogsAsync(this Project self, CancellationToken cancellationToken = default)
+    {
+        await using var context = CreateContext();
+        var projectId = self.Id;
+        return context.TimeLogs.Any((q) => q.ProjectFk == projectId);
+    }
+
+    public static async Task DeleteAsync(this Project self, CancellationToken cancellationToken = default)
+    {
+        await using var context = CreateContext();
+        context.Projects.Attach(self);
+        var projectId = self.Id;
+        if (context.TimeLogs.Any((q) => q.ProjectFk == projectId))
+            throw new InvalidOperationException($"Project still has TimeLogs.");
+        context.Projects.Remove(self);
+        await context.SaveChangesAsync(cancellationToken);
+    }
+
+    public static async IAsyncEnumerable<TimeLog> GetTimeLogs(
+        this Project project,
+        [EnumeratorCancellation] CancellationToken cancellationToken = default)
+    {
+        await using var context = CreateContext();
+        var projectId = project.Id;
+        var range = context.TimeLogs
+            .Where((timeLog) => timeLog.ProjectFk == projectId)
+            .OrderBy((timeLog) => timeLog.TimeStamp)
+            .AsAsyncEnumerable()
+            .ConfigureAwait(false);
+        await foreach (var timeLog in range.WithCancellation(cancellationToken)
+                           .ConfigureAwait(false))
+        {
+            yield return timeLog;
+        }
+    }
+    
+    public static async IAsyncEnumerable<Day> GetDays(this Project project, [EnumeratorCancellation] CancellationToken cancellationToken = default)
+    {
+        await using var context = CreateContext();
+        var projectId = project.Id;
+        var range = context.TimeLogs
+            .Where((timeLog) => timeLog.ProjectFk == projectId)
+            .Select((timeLog) => timeLog.Day!)
+            .Distinct()
+            .OrderByDescending((day) => day.Date.Year)
+            .ThenByDescending((day) => day.Date.Month)
+            .ThenByDescending((day) => day.Date.Day)
+            .AsAsyncEnumerable()
+            .ConfigureAwait(false);
+        await foreach (var day in range.WithCancellation(cancellationToken)
+                           .ConfigureAwait(false))
+        {
+            yield return day;
         }
     }
 
@@ -464,9 +543,11 @@ public static class QtRepository
                 {
                     nameof(TimeLog.Id)              => true,
                     nameof(TimeLog.DayFk)           => true,
-                    nameof(TimeLog.Day)             => true,
+                    nameof(TimeLog.Day)             => false,
                     nameof(TimeLog.Project)         => true,
+                    nameof(TimeLog.ProjectFk)       => false,
                     nameof(TimeLog.Location)        => true,
+                    nameof(TimeLog.LocationFk)      => false,
                     nameof(TimeLog.JsonAttachments) => true,
                     _                               => false,
                 })
@@ -632,8 +713,48 @@ public static class QtRepository
             .SaveChangesAsync(cancellationToken)
             .ConfigureAwait(false);
     }
+    
+    public static async Task<IReadOnlyCollection<(int id, string realm)>> GetJsonAttachmentRealmsAsync<T>(this T self,
+        CancellationToken cancellationToken = default)
+        where T : class, IHasJsonAttachment<T>, IHasId
+    {
+        await using var context = CreateContext();
+        var set = context.Set<JsonAttachment<T>>();
+        var parentId = self.Id;
+        var range = await set
+            .Where((q) => q.ParentFk == parentId)
+            .Select((q) => new {q.Id, q.Realm})
+            .ToArrayAsync(cancellationToken)
+            .ConfigureAwait(false);
+        return range.Select((q) => (q.Id, q.Realm)).ToImmutableArray();
+    }
 
-    public static async Task<JsonAttachment<T>> GetJsonAttachment<T>(
+    public static async Task<JsonAttachment<T>> GetJsonAttachmentAsync<T>(
+        this T self,
+        int id,
+        CancellationToken cancellationToken = default)
+        where T : class, IHasJsonAttachment<T>, IHasId, new()
+    {
+        await using var context = CreateContext();
+        var set = context.Set<JsonAttachment<T>>();
+        var parentId = self.Id;
+        var single = await set
+            .SingleOrDefaultAsync((q) => q.Id == id && q.ParentFk == parentId, cancellationToken)
+            .ConfigureAwait(false);
+        if (single is not null)
+            return single;
+        context.Set<T>().Attach(self);
+        single = new JsonAttachment<T>()
+        {
+            Parent = self,
+        };
+        set.Add(single);
+        await context.SaveChangesAsync(cancellationToken)
+            .ConfigureAwait(false);
+        return single;
+    }
+
+    public static async Task<JsonAttachment<T>> GetJsonAttachmentAsync<T>(
         this T self,
         string realm,
         CancellationToken cancellationToken = default)

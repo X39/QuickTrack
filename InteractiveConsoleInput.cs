@@ -148,6 +148,12 @@ public class InteractiveConsoleInput
         public string ReadLine(CancellationToken cancellationToken)
         {
             var forwardHistory = new Stack<string>();
+            var historyReversed = _history.ToArray();
+            _history.Clear();
+            foreach (var s in historyReversed)
+            {
+                _history.Push(s);
+            }
             forwardHistory.Push(string.Empty);
             Console.Write(">");
 

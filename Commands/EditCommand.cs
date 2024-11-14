@@ -35,7 +35,8 @@ public class EditCommand : IConsoleCommand
             case 0:
                 new ConsoleString(
                     $"No date provided. Please provide a date in the format " +
-                    $"{Constants.DateFormatFormal} or {Constants.DateFormatNoDot}")
+                    $"{Constants.DateFormatFormal} or {Constants.DateFormatNoDot} " +
+                    $"or {Constants.FullDateFormatFormal} or {Constants.FullDateFormatNoDot}")
                 {
                     Foreground = ConsoleColor.Red,
                     Background = ConsoleColor.Black,
@@ -46,7 +47,13 @@ public class EditCommand : IConsoleCommand
                 var dateString = args[0];
                 if (DateOnly.TryParseExact(
                         dateString,
-                        new[] {Constants.DateFormatFormal, Constants.DateFormatNoDot},
+                        new[]
+                        {
+                            Constants.DateFormatFormal,
+                            Constants.DateFormatNoDot,
+                            Constants.FullDateFormatFormal,
+                            Constants.FullDateFormatNoDot
+                        },
                         CultureInfo.CurrentCulture,
                         DateTimeStyles.AllowWhiteSpaces,
                         out var date))
@@ -70,7 +77,12 @@ public class EditCommand : IConsoleCommand
                 var dateString = args[0];
                 if (DateOnly.TryParseExact(
                         dateString,
-                        new[] {Constants.DateFormatFormal, Constants.DateFormatNoDot},
+                        new[] {
+                            Constants.DateFormatFormal,
+                            Constants.DateFormatNoDot,
+                            Constants.FullDateFormatFormal,
+                            Constants.FullDateFormatNoDot
+                        },
                         CultureInfo.CurrentCulture,
                         DateTimeStyles.AllowWhiteSpaces,
                         out var date))
@@ -90,7 +102,12 @@ public class EditCommand : IConsoleCommand
                 dateString = args[1];
                 if (DateOnly.TryParseExact(
                         dateString,
-                        new[] {Constants.DateFormatFormal, Constants.DateFormatNoDot},
+                        new[] {
+                            Constants.DateFormatFormal,
+                            Constants.DateFormatNoDot,
+                            Constants.FullDateFormatFormal,
+                            Constants.FullDateFormatNoDot
+                        },
                         CultureInfo.CurrentCulture,
                         DateTimeStyles.AllowWhiteSpaces,
                         out date))
@@ -100,6 +117,7 @@ public class EditCommand : IConsoleCommand
                     {
                         dates.Add(first);
                     }
+
                     dates.Add(date);
                 }
                 else
@@ -374,16 +392,18 @@ public class EditCommand : IConsoleCommand
                     oldToNewTimeLogMapping[bestCandidate] = tuple;
             }
 
-            if (HasGaps(newTimeLogs.Concat(oldToNewTimeLogMapping.Values.NotNull())))
+            foreach (var grouping in oldToNewTimeLogMapping.GroupBy((q)=>q.Value?.row.Date))
             {
-                new ConsoleString("File has gaps for times, prompting reopen (close immediately to abort).")
+                if (HasGaps(newTimeLogs.Concat(grouping.Select((q)=>q.Value).NotNull())))
                 {
-                    Foreground = ConsoleColor.White,
-                    Background = ConsoleColor.DarkYellow,
-                }.WriteLine();
-                return EMergeResult.Reopen;
+                    new ConsoleString("File has gaps for times, prompting reopen (close immediately to abort).")
+                    {
+                        Foreground = ConsoleColor.White,
+                        Background = ConsoleColor.DarkYellow,
+                    }.WriteLine();
+                    return EMergeResult.Reopen;
+                }
             }
-
             await DeleteTimeLogsAsync(
                 oldToNewTimeLogMapping
                     .Where((q) => q.Value is null)

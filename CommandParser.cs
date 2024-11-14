@@ -154,14 +154,14 @@ public class CommandParser
 
     public async Task PromptCommandAsync(Stack<string> historyStack, CancellationToken cancellationToken)
     {
-        var line = InteractiveConsoleInput.ReadLine(historyStack, cancellationToken).Trim();
-        historyStack.Push(line);
+        var line = InteractiveConsoleInput.ReadLine(new Stack<string>(historyStack), cancellationToken).Trim();
         if (line.IsNullOrWhiteSpace())
         {
             if (_unmatchedCommand is not null)
                 await _unmatchedCommand.Action(string.Empty, cancellationToken);
             return;
         }
+        historyStack.Push(line);
 
         var words = SmartSplit(line);
         if (!words.Any())
@@ -332,6 +332,7 @@ public class CommandParser
                         continue;
                     quoted = false;
                     yield return line[start..(i - 1)].Replace(new string(quoteUsed, 2), quoteUsed.ToString());
+                    start = i + 1;
                 }
                 else
                 {
@@ -359,6 +360,8 @@ public class CommandParser
                 }
             }
 
+            if (start == line.Length)
+                yield break;
             if (quoted)
             {
                 yield return line[start..line.Length].Replace(new string(quoteUsed, 2), quoteUsed.ToString());
