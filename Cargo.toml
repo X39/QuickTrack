@@ -1,0 +1,10 @@
+[package]
+name = "quicktrack"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+tokio = "1.41.1"
+crossterm = "0.28.1"
+ratatui = "0.29.0"
+sqlx = { version = "0.8.2", features = [ "runtime-tokio" ] }
