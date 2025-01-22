@@ -1,0 +1,32 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT OR IGNORE INTO locations (title) VALUES (?);\n         SELECT * FROM locations WHERE title = ?;\n       ",
+  "describe": {
+    "columns": [
+      {
+        "name": "id",
+        "ordinal": 0,
+        "type_info": "Integer"
+      },
+      {
+        "name": "title",
+        "ordinal": 1,
+        "type_info": "Text"
+      },
+      {
+        "name": "timestamp",
+        "ordinal": 2,
+        "type_info": "Datetime"
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "97537fa12996c783f88d77352f5ee7bb16a6133860ca101d17adb9d2dbf39749"
+}

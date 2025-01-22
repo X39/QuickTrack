@@ -1,24 +1,28 @@
+mod command_handler;
 mod application;
+mod db_repository;
 mod default_window;
+mod db_data;
 
-use crate::application::Application;
+use crate::application::{Application, Windows};
 use crate::default_window::DefaultWindow;
-use crossterm::event;
-use crossterm::event::{poll, Event, KeyCode, KeyEventKind};
-use ratatui::prelude::Stylize;
-use ratatui::widgets::Paragraph;
-use ratatui::{DefaultTerminal, Frame};
 use std::io;
-use std::time::Duration;
 
-fn main() -> io::Result<()> {
+#[tokio::main]
+async fn main() -> io::Result<()> {
+    let pool = sqlx::sqlite::SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect("sqlite:quicktrack.db")
+        .await;
+    if pool.is_err() {
+        panic!("Failed to connect to database quicktrack.db");
+    }
+    let pool = pool.unwrap();
     let mut terminal = ratatui::init();
     terminal.clear()?;
-    let mut app = Application::new();
-    app.push_window(Box::new(DefaultWindow {
-        ..Default::default()
-    }));
-    let app_result = app.application_loop(terminal);
+    let mut app = Application::new(pool);
+    app.push_window(Windows::Default(DefaultWindow::new()));
+    let app_result = app.application_loop(terminal).await;
     ratatui::restore();
     app_result
 }

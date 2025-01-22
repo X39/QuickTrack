@@ -1,0 +1,38 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT OR IGNORE INTO days (day, month, year) VALUES (?, ?, ?);\n         SELECT * FROM days WHERE day = ? AND month = ? AND year = ?;\n       ",
+  "describe": {
+    "columns": [
+      {
+        "name": "id",
+        "ordinal": 0,
+        "type_info": "Integer"
+      },
+      {
+        "name": "day",
+        "ordinal": 1,
+        "type_info": "Integer"
+      },
+      {
+        "name": "month",
+        "ordinal": 2,
+        "type_info": "Integer"
+      },
+      {
+        "name": "year",
+        "ordinal": 3,
+        "type_info": "Integer"
+      }
+    ],
+    "parameters": {
+      "Right": 6
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "00edb561fd591ce835ef944f2d2eb5c35cb681360f671be668857d93a36b2165"
+}
