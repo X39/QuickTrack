@@ -1,4 +1,6 @@
-﻿pub struct Day {
+﻿use chrono::{Datelike, Timelike, Weekday};
+
+pub struct Day {
     pub id: i64,
     pub year: u16,
     pub month: u16,
@@ -14,12 +16,13 @@ pub struct Location {
     pub title: String,
     pub timestamp_created: chrono::DateTime<chrono::Utc>,
 }
+#[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum TimeLogKind {
-    Note,
-    DayCreated,
-    LogLineAppended,
-    LogLineUpdated,
-    LogLineRemoved,
+    Note = 0,
+    DayCreated = 1,
+    LogLineAppended = 2,
+    LogLineUpdated = 3,
+    LogLineRemoved = 4,
 }
 pub struct TimeLogAudit {
     pub id: i64,
@@ -70,4 +73,133 @@ pub struct TimeLog {
     pub timestamp_created: chrono::DateTime<chrono::Utc>,
     pub message: String,
     pub mode: TimeLogMode,
+}
+
+impl TimeLog {
+    pub fn to_display_string(
+        &self,
+        next_ts: Option<chrono::DateTime<chrono::Utc>>,
+        location: Option<&String>,
+        project: Option<&String>,
+    ) -> String {
+        let weekday = match self.timestamp_created.weekday() {
+            Weekday::Mon => "MON",
+            Weekday::Tue => "TUE",
+            Weekday::Wed => "WED",
+            Weekday::Thu => "THU",
+            Weekday::Fri => "FRI",
+            Weekday::Sat => "SAT",
+            Weekday::Sun => "SUN",
+        };
+        match next_ts {
+            None => match location {
+                None => match project {
+                    None => format!(
+                        "[{:0>4}-{:0>2}-{:>2}][{}][{:0>2}:{:0>2}] {}",
+                        self.timestamp_created.year(),
+                        self.timestamp_created.month(),
+                        self.timestamp_created.day(),
+                        weekday,
+                        self.timestamp_created.hour(),
+                        self.timestamp_created.minute(),
+                        self.message
+                    ),
+                    Some(project) => format!(
+                        "[{:0>4}-{:0>2}-{:>2}][{}][{:0>2}:{:0>2}] {}: {}",
+                        self.timestamp_created.year(),
+                        self.timestamp_created.month(),
+                        self.timestamp_created.day(),
+                        weekday,
+                        self.timestamp_created.hour(),
+                        self.timestamp_created.minute(),
+                        project,
+                        self.message
+                    ),
+                },
+                Some(location) => match project {
+                    None => format!(
+                        "[{:0>4}-{:0>2}-{:>2}][{}][{:0>2}:{:0>2}][{}] {}",
+                        self.timestamp_created.year(),
+                        self.timestamp_created.month(),
+                        self.timestamp_created.day(),
+                        weekday,
+                        self.timestamp_created.hour(),
+                        self.timestamp_created.minute(),
+                        location,
+                        self.message
+                    ),
+                    Some(project) => format!(
+                        "[{:0>4}-{:0>2}-{:>2}][{}][{:0>2}:{:0>2}][{}] {}: {}",
+                        self.timestamp_created.year(),
+                        self.timestamp_created.month(),
+                        self.timestamp_created.day(),
+                        weekday,
+                        self.timestamp_created.hour(),
+                        self.timestamp_created.minute(),
+                        location,
+                        project,
+                        self.message
+                    ),
+                },
+            },
+            Some(next_ts) => match location {
+                None => match project {
+                    None => format!(
+                        "[{:0>4}-{:0>2}-{:>2}][{}][{:0>2}:{:0>2} - {:0>2}:{:0>2}] {}",
+                        self.timestamp_created.year(),
+                        self.timestamp_created.month(),
+                        self.timestamp_created.day(),
+                        weekday,
+                        self.timestamp_created.hour(),
+                        self.timestamp_created.minute(),
+                        next_ts.hour(),
+                        next_ts.minute(),
+                        self.message
+                    ),
+                    Some(project) => format!(
+                        "[{:0>4}-{:0>2}-{:>2}][{}][{:0>2}:{:0>2} - {:0>2}:{:0>2}] {}: {}",
+                        self.timestamp_created.year(),
+                        self.timestamp_created.month(),
+                        self.timestamp_created.day(),
+                        weekday,
+                        self.timestamp_created.hour(),
+                        self.timestamp_created.minute(),
+                        next_ts.hour(),
+                        next_ts.minute(),
+                        project,
+                        self.message
+                    ),
+                },
+                Some(location) => match project {
+                    None => format!(
+                        "[{:0>4}-{:0>2}-{:>2}][{}][{:0>2}:{:0>2} - {:0>2}:{:0>2}][{}] {}",
+                        self.timestamp_created.year(),
+                        self.timestamp_created.month(),
+                        self.timestamp_created.day(),
+                        weekday,
+                        self.timestamp_created.hour(),
+                        self.timestamp_created.minute(),
+                        next_ts.hour(),
+                        next_ts.minute(),
+                        location,
+                        self.message
+                    ),
+                    Some(project) => format!(
+                        "[{:0>4}-{:0>2}-{:>2}][{}][{:0>2}:{:0>2} - {:0>2}:{:0>2}][{}] {}: {}",
+                        self.timestamp_created.year(),
+                        self.timestamp_created.month(),
+                        self.timestamp_created.day(),
+                        weekday,
+                        self.timestamp_created.hour(),
+                        self.timestamp_created.minute(),
+                        next_ts.hour(),
+                        next_ts.minute(),
+                        location,
+                        project,
+                        self.message
+                    ),
+                },
+            },
+        }
+    }
 }

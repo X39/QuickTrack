@@ -3,6 +3,7 @@ mod application;
 mod db_repository;
 mod default_window;
 mod db_data;
+mod log;
 
 use crate::application::{Application, Windows};
 use crate::default_window::DefaultWindow;

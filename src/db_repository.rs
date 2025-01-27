@@ -1,5 +1,5 @@
-﻿use crate::db_data::{Day, Location, Project, TimeLog, TimeLogMode};
-use chrono::{Date, DateTime, FixedOffset, Local, NaiveDateTime, TimeZone, Timelike, Utc};
+﻿use crate::db_data::{Day, Location, Project, TimeLog, TimeLogKind, TimeLogMode};
+use chrono::{DateTime, Datelike, NaiveDateTime, Timelike, Utc};
 use sqlx::{query, query_scalar, Pool, Sqlite};
 
 fn to_date_time_utc(src: NaiveDateTime) -> DateTime<Utc> {
@@ -13,7 +13,7 @@ fn to_date_time_utc(src: NaiveDateTime) -> DateTime<Utc> {
 
 pub(crate) async fn get_project(
     pool: Pool<Sqlite>,
-    project: String,
+    project: &String,
 ) -> Result<Project, sqlx::Error> {
     let projects = query!(
         "INSERT OR IGNORE INTO projects (title) VALUES (?);
@@ -32,7 +32,7 @@ pub(crate) async fn get_project(
 }
 pub(crate) async fn get_location(
     pool: Pool<Sqlite>,
-    location: String,
+    location: &String,
 ) -> Result<Location, sqlx::Error> {
     let locations = query!(
         "INSERT OR IGNORE INTO locations (title) VALUES (?);
@@ -51,9 +51,9 @@ pub(crate) async fn get_location(
 }
 pub(crate) async fn get_day(
     pool: Pool<Sqlite>,
-    day: u16,
-    month: u16,
     year: u16,
+    month: u16,
+    day: u16,
 ) -> Result<Day, sqlx::Error> {
     let days = query!(
         "INSERT OR IGNORE INTO days (day, month, year) VALUES (?, ?, ?);
@@ -78,18 +78,36 @@ pub(crate) async fn get_day(
 
 pub(crate) async fn add_time_log(
     pool: Pool<Sqlite>,
-    project: String,
-    location: String,
+    project: &String,
+    location: &String,
     mode: TimeLogMode,
-    message: String,
+    message: &String,
 ) -> Result<TimeLog, sqlx::Error> {
+    let ts = Utc::now();
+    let tl = TimeLog {
+        timestamp_created: ts,
+        message: message.to_string(),
+        mode,
+
+        id: 0,
+        day_id: 0,
+        project_id: 0,
+        location_id: 0,
+    };
+    let tl = tl.to_display_string(None, Some(location), Some(project));
+    let day = get_day(pool.clone(), ts.year() as u16, ts.month() as u16, ts.day() as u16).await?;
     let project = get_project(pool.clone(), project).await?;
     let location = get_location(pool.clone(), location).await?;
-    let ts = Utc::now();
     let mode = mode as u8;
+    let audit_kind = TimeLogKind::LogLineAppended as u8;
     let row = query_scalar!(
-        "INSERT INTO time_log (project_fk, location_fk, timestamp_created, message, mode)\
-         VALUES (?, ?, ?, ?, ?) RETURNING id;",
+        "INSERT INTO time_log_audit (timestamp_created, kind, message) VALUES (?, ?, ?);\
+        INSERT INTO time_log (day_fk, project_fk, location_fk, timestamp_created, message, mode)\
+         VALUES (?, ?, ?, ?, ?, ?) RETURNING id;",
+        ts,
+        audit_kind,
+        tl,
+        day.id,
         project.id,
         location.id,
         ts,
