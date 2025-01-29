@@ -11,3 +11,4 @@ sqlx = { version = "0.8.2", features = ["runtime-tokio", "sqlite", "macros", "mi
 tui-input = "0.11.1"
 features = "0.10.0"
 chrono = "0.4.39"
+clap = { version = "4.5.27", features = ["cargo"] }

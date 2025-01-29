@@ -11,7 +11,7 @@ fn to_date_time_utc(src: NaiveDateTime) -> DateTime<Utc> {
     }
 }
 
-pub(crate) async fn get_project(
+pub(crate) async fn get_or_add_project(
     pool: Pool<Sqlite>,
     project: &String,
 ) -> Result<Project, sqlx::Error> {
@@ -28,9 +28,46 @@ pub(crate) async fn get_project(
         id: project.id,
         title: project.title,
         timestamp_created: to_date_time_utc(project.timestamp_created),
+        active: project.active,
     })
 }
-pub(crate) async fn get_location(
+pub(crate) async fn get_project(
+    pool: Pool<Sqlite>,
+    project: &String,
+) -> Result<Option<Project>, sqlx::Error> {
+    let projects = query!(
+        "SELECT * FROM projects WHERE title = ?;",
+        project
+    );
+    let project = projects.fetch_optional(&pool).await?;
+    if let Some(project) = project {
+        Ok(Some(Project {
+            id: project.id,
+            title: project.title,
+            timestamp_created: to_date_time_utc(project.timestamp_created),
+            active: project.active,
+        }))
+    } else {
+        Ok(None)
+    }
+}
+
+pub(crate) async fn get_active_project(pool: Pool<Sqlite>) -> Result<Option<Project>, sqlx::Error> {
+    let projects = query!("SELECT * FROM projects WHERE active = TRUE;");
+    let project = projects.fetch_optional(&pool).await?;
+
+    if let Some(project) = project {
+        Ok(Some(Project {
+            id: project.id,
+            title: project.title,
+            timestamp_created: to_date_time_utc(project.timestamp_created),
+            active: project.active,
+        }))
+    } else {
+        Ok(None)
+    }
+}
+pub(crate) async fn get_or_add_location(
     pool: Pool<Sqlite>,
     location: &String,
 ) -> Result<Location, sqlx::Error> {
@@ -47,7 +84,45 @@ pub(crate) async fn get_location(
         id: location.id,
         title: location.title,
         timestamp_created: to_date_time_utc(location.timestamp_created),
+        active: location.active,
     })
+}
+pub(crate) async fn get_location(
+    pool: Pool<Sqlite>,
+    location: &String,
+) -> Result<Option<Location>, sqlx::Error> {
+    let locations = query!(
+        "SELECT * FROM locations WHERE title = ?;",
+        location
+    );
+    let location = locations.fetch_optional(&pool).await?;
+    if let Some(location) = location {
+        Ok(Some(Location {
+            id: location.id,
+            title: location.title,
+            timestamp_created: to_date_time_utc(location.timestamp_created),
+            active: location.active,
+        }))
+    } else {
+        Ok(None)
+    }
+}
+pub(crate) async fn get_active_location(
+    pool: Pool<Sqlite>,
+) -> Result<Option<Location>, sqlx::Error> {
+    let locations = query!("SELECT * FROM locations WHERE active = TRUE;");
+    let location = locations.fetch_optional(&pool).await?;
+
+    if let Some(location) = location {
+        Ok(Some(Location {
+            id: location.id,
+            title: location.title,
+            timestamp_created: to_date_time_utc(location.timestamp_created),
+            active: location.active,
+        }))
+    } else {
+        Ok(None)
+    }
 }
 pub(crate) async fn get_day(
     pool: Pool<Sqlite>,
@@ -95,9 +170,15 @@ pub(crate) async fn add_time_log(
         location_id: 0,
     };
     let tl = tl.to_display_string(None, Some(location), Some(project));
-    let day = get_day(pool.clone(), ts.year() as u16, ts.month() as u16, ts.day() as u16).await?;
-    let project = get_project(pool.clone(), project).await?;
-    let location = get_location(pool.clone(), location).await?;
+    let day = get_day(
+        pool.clone(),
+        ts.year() as u16,
+        ts.month() as u16,
+        ts.day() as u16,
+    )
+    .await?;
+    let project = get_or_add_project(pool.clone(), project).await?;
+    let location = get_or_add_location(pool.clone(), location).await?;
     let mode = mode as u8;
     let audit_kind = TimeLogKind::LogLineAppended as u8;
     let row = query_scalar!(
@@ -128,4 +209,26 @@ pub(crate) async fn add_time_log(
         project_id: row.project_fk,
         location_id: row.location_fk,
     })
+}
+
+pub(crate) async fn set_active_project(pool: Pool<Sqlite>, project: &String) -> Result<(), sqlx::Error> {
+    query!("UPDATE projects SET active = FALSE WHERE active = TRUE;")
+        .execute(&pool)
+        .await?;
+
+    query!("UPDATE projects SET active = TRUE WHERE title = ?;", project)
+        .execute(&pool)
+        .await?;
+    Ok(())
+}
+
+pub(crate) async fn set_active_location(pool: Pool<Sqlite>, location: &String) -> Result<(), sqlx::Error> {
+    query!("UPDATE locations SET active = FALSE WHERE active = TRUE;")
+        .execute(&pool)
+        .await?;
+
+    query!("UPDATE locations SET active = TRUE WHERE title = ?;", location)
+        .execute(&pool)
+        .await?;
+    Ok(())
 }

@@ -1,6 +1,7 @@
-﻿use crate::application::{AppContext, Application, Window};
+﻿use crate::application::{AppContext, Window};
 use crate::command_handler::CommandHandler;
-use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyEventState, MouseEvent};
+use crate::log::Message;
+use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, MouseEvent};
 use ratatui::prelude::Constraint::{Length, Min};
 use ratatui::prelude::*;
 use ratatui::prelude::{Layout, Stylize};
@@ -8,12 +9,11 @@ use ratatui::symbols::border;
 use ratatui::text::Line;
 use ratatui::widgets::{Block, List, ListItem, ListState, Paragraph};
 use ratatui::Frame;
-use sqlx::{Pool, Sqlite};
-use std::cmp::{max, min};
+use std::cmp::max;
 use tui_input::backend::crossterm::EventHandler;
 use tui_input::Input;
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct DefaultWindow {
     input: Input,
     log_state: ListState,
@@ -21,13 +21,17 @@ pub struct DefaultWindow {
 }
 
 impl DefaultWindow {
-    pub(crate) fn new() -> Self {
-        Default::default()
+    pub fn new() -> Self {
+        Self {
+            input: Input::default(),
+            log_state: ListState::default(),
+            command_handler: CommandHandler::new(),
+        }
     }
 }
 
 impl Window for DefaultWindow {
-    fn render(self: &mut Self, app: AppContext, frame: &mut Frame) {
+    fn render(self: &mut Self, app: &AppContext, frame: &mut Frame) {
         let lines = max(self.input.value().lines().count(), 1);
         let layout = Layout::vertical([Min(0), Length(lines as u16 + 2)]);
         let [history_area, input_area] = layout.areas(frame.area());
@@ -39,52 +43,62 @@ impl Window for DefaultWindow {
         if messages.len() > 0 && to != usize::MAX {
             to = to + 1;
         }
-        let history = List::new(messages.iter().map(|span| ListItem::new(span.clone())))
-            .block(
-                Block::bordered()
-                    .title_bottom(Line::from(
-                        if messages.len() < 10 {
-                            format!(
-                                " {: >1} - {: >1} / {: >1} | PG-UP/PG-DOWN to scroll ",
-                                from,
-                                to,
-                                messages.len()
-                            )
-                        } else if messages.len() < 100 {
-                            format!(
-                                " {: >2} - {: >2} / {: >2} | PG-UP/PG-DOWN to scroll ",
-                                from,
-                                to,
-                                messages.len()
-                            )
-                        } else if messages.len() < 1000 {
-                            format!(
-                                " {: >3} - {: >3} / {: >3} | PG-UP/PG-DOWN to scroll ",
-                                from,
-                                to,
-                                messages.len()
-                            )
-                        } else if messages.len() < 10000 {
-                            format!(
-                                " {: >4} - {: >4} / {: >4} | PG-UP/PG-DOWN to scroll ",
-                                from,
-                                to,
-                                messages.len()
-                            )
-                        } else {
-                            format!(
-                                " {: >5} - {: >5} / {: >5} | PG-UP/PG-DOWN to scroll ",
-                                from,
-                                to,
-                                messages.len()
-                            )
-                        }
-                        .bold(),
-                    ))
-                    .title_alignment(Alignment::Center)
-                    .border_set(border::THICK),
-            )
-            .highlight_symbol("> ");
+        let history = List::new(messages.iter().map(|msg| {
+            ListItem::new(match msg {
+                Message::Log(s) => s.clone().fg(Color::Gray).bg(Color::Black),
+                Message::Normal(s) => s.clone().fg(Color::White).bg(Color::Black),
+                Message::Info(s) => s.clone().fg(Color::LightBlue).bg(Color::Black),
+                Message::Warning(s) => s.clone().fg(Color::LightYellow).bg(Color::Black),
+                Message::Error(s) => s.clone().fg(Color::White).bg(Color::Red),
+                Message::Success(s) => s.clone().fg(Color::Green).bg(Color::Black),
+                Message::Failure(s) => s.clone().fg(Color::Red).bg(Color::Black),
+            })
+        }))
+        .block(
+            Block::bordered()
+                .title_bottom(Line::from(
+                    if messages.len() < 10 {
+                        format!(
+                            " {: >1} - {: >1} / {: >1} | PG-UP/PG-DOWN to scroll ",
+                            from,
+                            to,
+                            messages.len()
+                        )
+                    } else if messages.len() < 100 {
+                        format!(
+                            " {: >2} - {: >2} / {: >2} | PG-UP/PG-DOWN to scroll ",
+                            from,
+                            to,
+                            messages.len()
+                        )
+                    } else if messages.len() < 1000 {
+                        format!(
+                            " {: >3} - {: >3} / {: >3} | PG-UP/PG-DOWN to scroll ",
+                            from,
+                            to,
+                            messages.len()
+                        )
+                    } else if messages.len() < 10000 {
+                        format!(
+                            " {: >4} - {: >4} / {: >4} | PG-UP/PG-DOWN to scroll ",
+                            from,
+                            to,
+                            messages.len()
+                        )
+                    } else {
+                        format!(
+                            " {: >5} - {: >5} / {: >5} | PG-UP/PG-DOWN to scroll ",
+                            from,
+                            to,
+                            messages.len()
+                        )
+                    }
+                    .bold(),
+                ))
+                .title_alignment(Alignment::Center)
+                .border_set(border::THICK),
+        )
+        .highlight_symbol("> ");
 
         frame.render_stateful_widget(history, history_area, &mut self.log_state);
 
@@ -100,13 +114,13 @@ impl Window for DefaultWindow {
             input_area.y + 1,
         ));
     }
-    async fn step(self: &mut Self, app: AppContext<'_>) {}
+    async fn step(self: &mut Self, app: &AppContext) {}
 
-    async fn on_focus_gained(self: &mut Self, app: AppContext<'_>) {}
+    async fn on_focus_gained(self: &mut Self, app: &AppContext) {}
 
-    async fn on_focus_lost(self: &mut Self, app: AppContext<'_>) {}
+    async fn on_focus_lost(self: &mut Self, app: &AppContext) {}
 
-    async fn on_key(self: &mut Self, app: AppContext<'_>, key: KeyEvent) {
+    async fn on_key(self: &mut Self, app: &AppContext, key: KeyEvent) {
         match key.code {
             KeyCode::PageUp => {
                 if key.kind == KeyEventKind::Press {
@@ -123,7 +137,7 @@ impl Window for DefaultWindow {
                     let line = self.input.value();
                     if self
                         .command_handler
-                        .handle_input(app.clone(), line.to_string())
+                        .handle_input(app, &line.to_string())
                         .await
                     {
                         self.input.reset();
@@ -137,9 +151,9 @@ impl Window for DefaultWindow {
         };
     }
 
-    async fn on_mouse(self: &mut Self, app: AppContext<'_>, _mouse: MouseEvent) {}
+    async fn on_mouse(self: &mut Self, app: &AppContext, _mouse: MouseEvent) {}
 
-    async fn on_paste(self: &mut Self, app: AppContext<'_>, _data: String) {}
+    async fn on_paste(self: &mut Self, app: &AppContext, _data: String) {}
 
-    async fn on_resize(self: &mut Self, app: AppContext<'_>, _columns: u16, _rows: u16) {}
+    async fn on_resize(self: &mut Self, app: &AppContext, _columns: u16, _rows: u16) {}
 }

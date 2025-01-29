@@ -17,12 +17,18 @@
         "name": "timestamp_created",
         "ordinal": 2,
         "type_info": "Datetime"
+      },
+      {
+        "name": "active",
+        "ordinal": 3,
+        "type_info": "Bool"
       }
     ],
     "parameters": {
       "Right": 2
     },
     "nullable": [
+      false,
       false,
       false,
       false

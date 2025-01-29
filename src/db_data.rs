@@ -10,11 +10,13 @@ pub struct Project {
     pub id: i64,
     pub title: String,
     pub timestamp_created: chrono::DateTime<chrono::Utc>,
+    pub active: bool,
 }
 pub struct Location {
     pub id: i64,
     pub title: String,
     pub timestamp_created: chrono::DateTime<chrono::Utc>,
+    pub active: bool,
 }
 #[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum TimeLogKind {
@@ -82,7 +84,8 @@ impl TimeLog {
         location: Option<&String>,
         project: Option<&String>,
     ) -> String {
-        let weekday = match self.timestamp_created.weekday() {
+        let local_time = self.timestamp_created.with_timezone(&chrono::Local);
+        let weekday = match local_time.weekday() {
             Weekday::Mon => "MON",
             Weekday::Tue => "TUE",
             Weekday::Wed => "WED",
@@ -96,22 +99,22 @@ impl TimeLog {
                 None => match project {
                     None => format!(
                         "[{:0>4}-{:0>2}-{:>2}][{}][{:0>2}:{:0>2}] {}",
-                        self.timestamp_created.year(),
-                        self.timestamp_created.month(),
-                        self.timestamp_created.day(),
+                        local_time.year(),
+                        local_time.month(),
+                        local_time.day(),
                         weekday,
-                        self.timestamp_created.hour(),
-                        self.timestamp_created.minute(),
+                        local_time.hour(),
+                        local_time.minute(),
                         self.message
                     ),
                     Some(project) => format!(
                         "[{:0>4}-{:0>2}-{:>2}][{}][{:0>2}:{:0>2}] {}: {}",
-                        self.timestamp_created.year(),
-                        self.timestamp_created.month(),
-                        self.timestamp_created.day(),
+                        local_time.year(),
+                        local_time.month(),
+                        local_time.day(),
                         weekday,
-                        self.timestamp_created.hour(),
-                        self.timestamp_created.minute(),
+                        local_time.hour(),
+                        local_time.minute(),
                         project,
                         self.message
                     ),
@@ -119,23 +122,23 @@ impl TimeLog {
                 Some(location) => match project {
                     None => format!(
                         "[{:0>4}-{:0>2}-{:>2}][{}][{:0>2}:{:0>2}][{}] {}",
-                        self.timestamp_created.year(),
-                        self.timestamp_created.month(),
-                        self.timestamp_created.day(),
+                        local_time.year(),
+                        local_time.month(),
+                        local_time.day(),
                         weekday,
-                        self.timestamp_created.hour(),
-                        self.timestamp_created.minute(),
+                        local_time.hour(),
+                        local_time.minute(),
                         location,
                         self.message
                     ),
                     Some(project) => format!(
                         "[{:0>4}-{:0>2}-{:>2}][{}][{:0>2}:{:0>2}][{}] {}: {}",
-                        self.timestamp_created.year(),
-                        self.timestamp_created.month(),
-                        self.timestamp_created.day(),
+                        local_time.year(),
+                        local_time.month(),
+                        local_time.day(),
                         weekday,
-                        self.timestamp_created.hour(),
-                        self.timestamp_created.minute(),
+                        local_time.hour(),
+                        local_time.minute(),
                         location,
                         project,
                         self.message
@@ -146,24 +149,24 @@ impl TimeLog {
                 None => match project {
                     None => format!(
                         "[{:0>4}-{:0>2}-{:>2}][{}][{:0>2}:{:0>2} - {:0>2}:{:0>2}] {}",
-                        self.timestamp_created.year(),
-                        self.timestamp_created.month(),
-                        self.timestamp_created.day(),
+                        local_time.year(),
+                        local_time.month(),
+                        local_time.day(),
                         weekday,
-                        self.timestamp_created.hour(),
-                        self.timestamp_created.minute(),
+                        local_time.hour(),
+                        local_time.minute(),
                         next_ts.hour(),
                         next_ts.minute(),
                         self.message
                     ),
                     Some(project) => format!(
                         "[{:0>4}-{:0>2}-{:>2}][{}][{:0>2}:{:0>2} - {:0>2}:{:0>2}] {}: {}",
-                        self.timestamp_created.year(),
-                        self.timestamp_created.month(),
-                        self.timestamp_created.day(),
+                        local_time.year(),
+                        local_time.month(),
+                        local_time.day(),
                         weekday,
-                        self.timestamp_created.hour(),
-                        self.timestamp_created.minute(),
+                        local_time.hour(),
+                        local_time.minute(),
                         next_ts.hour(),
                         next_ts.minute(),
                         project,
@@ -173,12 +176,12 @@ impl TimeLog {
                 Some(location) => match project {
                     None => format!(
                         "[{:0>4}-{:0>2}-{:>2}][{}][{:0>2}:{:0>2} - {:0>2}:{:0>2}][{}] {}",
-                        self.timestamp_created.year(),
-                        self.timestamp_created.month(),
-                        self.timestamp_created.day(),
+                        local_time.year(),
+                        local_time.month(),
+                        local_time.day(),
                         weekday,
-                        self.timestamp_created.hour(),
-                        self.timestamp_created.minute(),
+                        local_time.hour(),
+                        local_time.minute(),
                         next_ts.hour(),
                         next_ts.minute(),
                         location,
@@ -186,12 +189,12 @@ impl TimeLog {
                     ),
                     Some(project) => format!(
                         "[{:0>4}-{:0>2}-{:>2}][{}][{:0>2}:{:0>2} - {:0>2}:{:0>2}][{}] {}: {}",
-                        self.timestamp_created.year(),
-                        self.timestamp_created.month(),
-                        self.timestamp_created.day(),
+                        local_time.year(),
+                        local_time.month(),
+                        local_time.day(),
                         weekday,
-                        self.timestamp_created.hour(),
-                        self.timestamp_created.minute(),
+                        local_time.hour(),
+                        local_time.minute(),
                         next_ts.hour(),
                         next_ts.minute(),
                         location,

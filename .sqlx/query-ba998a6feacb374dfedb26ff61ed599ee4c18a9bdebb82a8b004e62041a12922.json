@@ -1,0 +1,56 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT * FROM time_log WHERE id = ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "id",
+        "ordinal": 0,
+        "type_info": "Integer"
+      },
+      {
+        "name": "day_fk",
+        "ordinal": 1,
+        "type_info": "Integer"
+      },
+      {
+        "name": "project_fk",
+        "ordinal": 2,
+        "type_info": "Integer"
+      },
+      {
+        "name": "location_fk",
+        "ordinal": 3,
+        "type_info": "Integer"
+      },
+      {
+        "name": "timestamp_created",
+        "ordinal": 4,
+        "type_info": "Datetime"
+      },
+      {
+        "name": "message",
+        "ordinal": 5,
+        "type_info": "Text"
+      },
+      {
+        "name": "mode",
+        "ordinal": 6,
+        "type_info": "Integer"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "ba998a6feacb374dfedb26ff61ed599ee4c18a9bdebb82a8b004e62041a12922"
+}

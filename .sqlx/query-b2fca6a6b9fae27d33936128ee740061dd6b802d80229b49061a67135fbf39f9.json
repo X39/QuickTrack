@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE locations SET active = FALSE WHERE active = TRUE;",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": []
+  },
+  "hash": "b2fca6a6b9fae27d33936128ee740061dd6b802d80229b49061a67135fbf39f9"
+}

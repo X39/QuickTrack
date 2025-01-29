@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE projects SET active = TRUE WHERE title = ?;",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": []
+  },
+  "hash": "35f40e7b6fec7c693d5664586284c041a004413cf320757ef63bd0698af1fd4c"
+}

@@ -1,114 +1,112 @@
 ﻿use crate::application::AppContext;
+use crate::commands::Commands;
 use crate::db_data::TimeLogMode;
 use crate::db_repository;
-use crossterm::style::Color;
-use ratatui::prelude::{Span, Stylize};
+use crate::log::Message::{Error, Failure, Success};
 use std::fmt::Debug;
 
 pub trait Command {
     fn name(&self) -> &'static str;
-    async fn execute(&self, app: AppContext) -> Option<Span>;
+    async fn execute(&self, command: &String, app: &AppContext) -> bool;
 }
 #[derive(Clone, Debug)]
-pub struct LocationCommand;
-impl Command for LocationCommand {
-    fn name(&self) -> &'static str {
-        "location"
-    }
-
-    async fn execute(&self, app: AppContext<'_>) -> Option<Span> {
-        todo!()
-    }
-}
-
-#[derive(Clone, Debug)]
-pub enum Commands {
-    Location(LocationCommand),
-}
-
-impl Commands {
-    fn name(&self) -> &'static str {
-        match self {
-            Commands::Location(location) => location.name(),
-        }
-    }
-
-    async fn execute(&self, app: AppContext<'_>) -> Option<Span> {
-        match self {
-            Commands::Location(location) => location.execute(app).await,
-        }
-    }
-}
-#[derive(Clone, Debug, Default)]
 pub struct CommandHandler {
     commands: Vec<Commands>,
-    current_project: String,
-    current_location: String
 }
 impl CommandHandler {
-    pub fn set_project(&mut self, project: String) {
-        self.current_project = project;
+    pub fn new() -> Self {
+        Self {
+            commands: Commands::create_all(),
+        }
     }
-    pub async fn handle_input(&mut self, app: AppContext<'_>, command: String) -> bool {
-        if command.is_empty() {
-            app.log.append("Empty line cannot be submitted".fg(Color::Red));
+    pub async fn handle_input(&mut self, app: &AppContext, user_input: &String) -> bool {
+        if user_input.is_empty() {
+            app.log
+                .append(Failure("Empty line cannot be submitted".into()));
             return false;
         }
-        if let Some(_first_word) = command.split_whitespace().next() {
+        if let Some(_first_word) = user_input.split_whitespace().next() {
             for command in &self.commands {
                 let name = command.name();
                 if name == _first_word {
-                    let span = command.execute(app.clone()).await;
-                    if let Some(span) = span {
-                        app.log.append(span);
-                    }
-                    return true;
+                    return command.execute(user_input, app).await;
                 }
             }
         }
-        let command = command.trim();
+        let command = user_input.trim();
 
         // command is not a command but project log
         // Parse project logging, having either PROJECT:ACTIVITY or just ACTIVITY
 
         let colon_index = command.find(':');
-        let mut project = self.current_project.clone();
-        let location = self.current_location.clone();
+
+        // Load the active project
+        let mut project = db_repository::get_active_project(app.pool.clone()).await;
+        if let Err(e) = project {
+            app.log.append(Error(format!("SQLite Error: {:?}", e).into()));
+            return false;
+        }
+        let mut project = project.unwrap().map_or(
+            String::from(""),
+            |p| p.title.clone());
+
+        // Load the active location
+        let mut location = db_repository::get_active_location(app.pool.clone()).await;
+        if let Err(e) = location {
+            app.log.append(Error(format!("SQLite Error: {:?}", e).into()));
+            return false;
+        }
+        let location = location.unwrap().map_or(
+            String::from(""),
+            |p| p.title.clone());
+        if location.is_empty() {
+            app.log.append(Failure(
+                "No location set. Use location command to set the location.".into(),
+            ));
+            return false;
+        }
+        
+
         let activity: String;
         if let Some(colon_index) = colon_index {
             project = command[..colon_index].to_string();
-            self.current_project = project.clone();
+            if let Err(e) = db_repository::set_active_project(app.pool.clone(), &project).await {
+                app.log.append(Error(format!("SQLite Error: {:?}", e).into()));
+                return false;
+            }
             activity = command[(colon_index + 1)..].to_string();
         } else {
             activity = command.to_string();
         }
         if project.is_empty() {
-            app.log.append(
+            app.log.append(Failure(
                 format!(
                     "No project set. Use 'Your Project: {:}' to set a project.",
                     command
                 )
-                .fg(Color::Red),
-            );
+                .into(),
+            ));
             return false;
         }
-        if location.is_empty() {
-            app.log.append("No location set. Use location command to set the location".fg(Color::Red));
-            return false;
-        }
-        let result =
-            db_repository::add_time_log(app.pool, &project, &location, TimeLogMode::Normal, &activity)
-                .await;
+        let result = db_repository::add_time_log(
+            app.pool.clone(),
+            &project,
+            &location,
+            TimeLogMode::Normal,
+            &activity,
+        )
+        .await;
         if let Err(e) = result {
-            app.log.append(format!("SQLite Error: {:?}", e).fg(Color::Red))
+            app.log
+                .append(Error(format!("SQLite Error: {:?}", e).into()))
         } else {
             let time_log = result.unwrap();
 
-            app.log.append(
-                time_log
-                    .to_display_string(None, Some(&location), Some(&project))
-                    .fg(Color::Green),
-            )
+            app.log.append(Success(time_log.to_display_string(
+                None,
+                Some(&location),
+                Some(&project),
+            )))
         }
 
         true

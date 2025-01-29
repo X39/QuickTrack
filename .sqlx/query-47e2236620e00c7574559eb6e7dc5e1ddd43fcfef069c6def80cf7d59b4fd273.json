@@ -1,0 +1,20 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO time_log_audit (timestamp_created, kind, message) VALUES (?, ?, ?);INSERT INTO time_log (day_fk, project_fk, location_fk, timestamp_created, message, mode)VALUES (?, ?, ?, ?, ?, ?) RETURNING id;",
+  "describe": {
+    "columns": [
+      {
+        "name": "id",
+        "ordinal": 0,
+        "type_info": "Integer"
+      }
+    ],
+    "parameters": {
+      "Right": 9
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "47e2236620e00c7574559eb6e7dc5e1ddd43fcfef069c6def80cf7d59b4fd273"
+}

@@ -9,30 +9,30 @@ use std::time::Duration;
 
 pub trait Window {
     /// Renders the window
-    fn render(self: &mut Self, app: AppContext, frame: &mut Frame);
+    fn render(self: &mut Self, app: &AppContext, frame: &mut Frame);
 
     /// Performs an update step if needed
-    async fn step(self: &mut Self, app: AppContext);
+    async fn step(self: &mut Self, app: &AppContext);
 
     /// The terminal gained focus
-    async fn on_focus_gained(self: &mut Self, app: AppContext);
+    async fn on_focus_gained(self: &mut Self, app: &AppContext);
 
     /// The terminal lost focus
-    async fn on_focus_lost(self: &mut Self, app: AppContext);
+    async fn on_focus_lost(self: &mut Self, app: &AppContext);
 
     /// A single key event with additional pressed modifiers.
-    async fn on_key(self: &mut Self, app: AppContext, key: KeyEvent);
+    async fn on_key(self: &mut Self, app: &AppContext, key: KeyEvent);
 
     /// A single mouse event with additional pressed modifiers.
-    async fn on_mouse(self: &mut Self, app: AppContext, mouse: MouseEvent);
+    async fn on_mouse(self: &mut Self, app: &AppContext, mouse: MouseEvent);
 
     /// A string that was pasted into the terminal. Only emitted if bracketed paste has been
     /// enabled.
-    async fn on_paste(self: &mut Self, app: AppContext, data: String);
+    async fn on_paste(self: &mut Self, app: &AppContext, data: String);
 
     /// A resize event with new dimensions after resize (columns, rows).
     /// **Note** that resize events can occur in batches.
-    async fn on_resize(self: &mut Self, app: AppContext, columns: u16, rows: u16);
+    async fn on_resize(self: &mut Self, app: &AppContext, columns: u16, rows: u16);
 }
 #[derive(Clone, Debug)]
 pub enum Windows {
@@ -40,62 +40,62 @@ pub enum Windows {
 }
 
 impl Windows {
-    fn render(self: &mut Self, app: AppContext, frame: &mut Frame) {
+    fn render(self: &mut Self, app: &AppContext, frame: &mut Frame) {
         match self {
             Windows::Default(w) => w.render(app, frame),
         }
     }
-    async fn step(self: &mut Self, app: AppContext<'_>) {
+    async fn step(self: &mut Self, app: &AppContext) {
         match self {
             Windows::Default(w) => w.step(app).await,
         }
     }
-    async fn on_focus_gained(self: &mut Self, app: AppContext<'_>) {
+    async fn on_focus_gained(self: &mut Self, app: &AppContext) {
         match self {
             Windows::Default(w) => w.on_focus_gained(app).await,
         }
     }
-    async fn on_focus_lost(self: &mut Self, app: AppContext<'_>) {
+    async fn on_focus_lost(self: &mut Self, app: &AppContext) {
         match self {
             Windows::Default(w) => w.on_focus_lost(app).await,
         }
     }
-    async fn on_key(self: &mut Self, app: AppContext<'_>, key: KeyEvent) {
+    async fn on_key(self: &mut Self, app: &AppContext, key: KeyEvent) {
         match self {
             Windows::Default(w) => w.on_key(app, key).await,
         }
     }
-    async fn on_mouse(self: &mut Self, app: AppContext<'_>, mouse: MouseEvent) {
+    async fn on_mouse(self: &mut Self, app: &AppContext, mouse: MouseEvent) {
         match self {
             Windows::Default(w) => w.on_mouse(app, mouse).await,
         }
     }
-    async fn on_paste(self: &mut Self, app: AppContext<'_>, data: String) {
+    async fn on_paste(self: &mut Self, app: &AppContext, data: String) {
         match self {
             Windows::Default(w) => w.on_paste(app, data).await,
         }
     }
-    async fn on_resize(self: &mut Self, app: AppContext<'_>, columns: u16, rows: u16) {
+    async fn on_resize(self: &mut Self, app: &AppContext, columns: u16, rows: u16) {
         match self {
             Windows::Default(w) => w.on_resize(app, columns, rows).await,
         }
     }
 }
-pub struct Application<'a> {
+pub struct Application {
     exit: bool,
     active_window: usize,
     windows: Vec<Windows>,
     pool: Pool<Sqlite>,
-    log: Log<'a>,
+    log: Log,
 }
 
 #[derive(Clone)]
-pub struct AppContext<'a> {
+pub struct AppContext {
     pub pool: Pool<Sqlite>,
-    pub log: Log<'a>,
+    pub log: Log,
 }
 
-impl Application<'_> {
+impl Application {
     pub fn context(&self) -> AppContext{
         let pool = self.pool.clone();
         let log = self.log.clone();
@@ -103,7 +103,7 @@ impl Application<'_> {
     }
 }
 
-impl<'me> Application<'me> {
+impl Application {
     pub fn push_window(&mut self, window: Windows) {
         let index = self.windows.len();
         self.windows.push(window);
@@ -125,14 +125,14 @@ impl<'me> Application<'me> {
             // Render
             terminal.draw(|frame| {
                 if let Some(active_window) = self.windows.get_mut(self.active_window) {
-                    active_window.render(app_context.clone(), frame);
+                    active_window.render(&app_context, frame);
                 }
             })?;
 
             // Update
             for index in 0..self.windows.len() {
                 let window = &mut self.windows[index];
-                window.step(app_context.clone()).await;
+                window.step(&app_context).await;
             }
 
             // Events
@@ -151,12 +151,12 @@ impl<'me> Application<'me> {
                 self.exit = true;
             }
             Some(window) => match event {
-                Event::FocusGained => window.on_focus_gained(app_context).await,
-                Event::FocusLost => window.on_focus_lost(app_context).await,
-                Event::Key(key) => window.on_key(app_context, key).await,
-                Event::Mouse(mouse) => window.on_mouse(app_context, mouse).await,
-                Event::Paste(data) => window.on_paste(app_context, data).await,
-                Event::Resize(columns, rows) => window.on_resize(app_context, columns, rows).await,
+                Event::FocusGained => window.on_focus_gained(&app_context).await,
+                Event::FocusLost => window.on_focus_lost(&app_context).await,
+                Event::Key(key) => window.on_key(&app_context, key).await,
+                Event::Mouse(mouse) => window.on_mouse(&app_context, mouse).await,
+                Event::Paste(data) => window.on_paste(&app_context, data).await,
+                Event::Resize(columns, rows) => window.on_resize(&app_context, columns, rows).await,
             },
         };
         Ok(())

@@ -17,7 +17,8 @@ CREATE TABLE projects
         CONSTRAINT projects_pk
             PRIMARY KEY AUTOINCREMENT,
     title             TEXT                               NOT NULL,
-    timestamp_created DATETIME DEFAULT CURRENT_TIMESTAMP NOT NULL
+    timestamp_created DATETIME DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    active            BOOLEAN NOT NULL DEFAULT FALSE
 );
 
 create unique index projects_title_uindex
@@ -25,11 +26,12 @@ create unique index projects_title_uindex
 
 CREATE TABLE locations
 (
-    id                INTEGER                            NOT NULL
+    id                INTEGER NOT NULL
         CONSTRAINT locations_pk
             PRIMARY KEY AUTOINCREMENT,
-    title             TEXT                               NOT NULL,
-    timestamp_created DATETIME DEFAULT CURRENT_TIMESTAMP NOT NULL
+    title             TEXT    NOT NULL,
+    timestamp_created DATETIME         DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    active            BOOLEAN NOT NULL DEFAULT FALSE
 );
 
 create unique index locations_title_uindex
