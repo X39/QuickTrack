@@ -24,7 +24,7 @@ pub enum TimeLogKind {
     DayCreated = 1,
     LogLineAppended = 2,
     LogLineUpdated = 3,
-    LogLineRemoved = 4,
+    LogLineMarkedAsDeleted = 4,
 }
 pub struct TimeLogAudit {
     pub id: i64,
@@ -67,6 +67,7 @@ impl From<i64> for TimeLogMode {
     }
 }
 
+#[derive(Clone, Debug)]
 pub struct TimeLog {
     pub id: i64,
     pub day_id: i64,
@@ -78,6 +79,23 @@ pub struct TimeLog {
 }
 
 impl TimeLog {
+    pub fn to_display_string_alt(
+        &self,
+        next_ts: Option<chrono::DateTime<chrono::Utc>>,
+        location: Option<&Location>,
+        project: Option<&Project>,
+    ) -> String {
+        match location {
+            Some(location) => match project {
+                Some(project) => self.to_display_string(next_ts, Some(&location.title), Some(&project.title)),
+                None => self.to_display_string(next_ts, Some(&location.title), None),
+            },
+            None => match project {
+                Some(project) => self.to_display_string(next_ts, None, Some(&project.title)),
+                None => self.to_display_string(next_ts, None, None),
+            },
+        }
+    }
     pub fn to_display_string(
         &self,
         next_ts: Option<chrono::DateTime<chrono::Utc>>,
@@ -98,7 +116,7 @@ impl TimeLog {
             None => match location {
                 None => match project {
                     None => format!(
-                        "[{:0>4}-{:0>2}-{:>2}][{}][{:0>2}:{:0>2}] {}",
+                        "[{:0>4}-{:0>2}-{:0>2}][{}][{:0>2}:{:0>2}] {}",
                         local_time.year(),
                         local_time.month(),
                         local_time.day(),
@@ -108,7 +126,7 @@ impl TimeLog {
                         self.message
                     ),
                     Some(project) => format!(
-                        "[{:0>4}-{:0>2}-{:>2}][{}][{:0>2}:{:0>2}] {}: {}",
+                        "[{:0>4}-{:0>2}-{:0>2}][{}][{:0>2}:{:0>2}] {}: {}",
                         local_time.year(),
                         local_time.month(),
                         local_time.day(),
@@ -121,7 +139,7 @@ impl TimeLog {
                 },
                 Some(location) => match project {
                     None => format!(
-                        "[{:0>4}-{:0>2}-{:>2}][{}][{:0>2}:{:0>2}][{}] {}",
+                        "[{:0>4}-{:0>2}-{:0>2}][{}][{:0>2}:{:0>2}][{}] {}",
                         local_time.year(),
                         local_time.month(),
                         local_time.day(),
@@ -132,7 +150,7 @@ impl TimeLog {
                         self.message
                     ),
                     Some(project) => format!(
-                        "[{:0>4}-{:0>2}-{:>2}][{}][{:0>2}:{:0>2}][{}] {}: {}",
+                        "[{:0>4}-{:0>2}-{:0>2}][{}][{:0>2}:{:0>2}][{}] {}: {}",
                         local_time.year(),
                         local_time.month(),
                         local_time.day(),
@@ -145,63 +163,66 @@ impl TimeLog {
                     ),
                 },
             },
-            Some(next_ts) => match location {
-                None => match project {
-                    None => format!(
-                        "[{:0>4}-{:0>2}-{:>2}][{}][{:0>2}:{:0>2} - {:0>2}:{:0>2}] {}",
-                        local_time.year(),
-                        local_time.month(),
-                        local_time.day(),
-                        weekday,
-                        local_time.hour(),
-                        local_time.minute(),
-                        next_ts.hour(),
-                        next_ts.minute(),
-                        self.message
-                    ),
-                    Some(project) => format!(
-                        "[{:0>4}-{:0>2}-{:>2}][{}][{:0>2}:{:0>2} - {:0>2}:{:0>2}] {}: {}",
-                        local_time.year(),
-                        local_time.month(),
-                        local_time.day(),
-                        weekday,
-                        local_time.hour(),
-                        local_time.minute(),
-                        next_ts.hour(),
-                        next_ts.minute(),
-                        project,
-                        self.message
-                    ),
-                },
-                Some(location) => match project {
-                    None => format!(
-                        "[{:0>4}-{:0>2}-{:>2}][{}][{:0>2}:{:0>2} - {:0>2}:{:0>2}][{}] {}",
-                        local_time.year(),
-                        local_time.month(),
-                        local_time.day(),
-                        weekday,
-                        local_time.hour(),
-                        local_time.minute(),
-                        next_ts.hour(),
-                        next_ts.minute(),
-                        location,
-                        self.message
-                    ),
-                    Some(project) => format!(
-                        "[{:0>4}-{:0>2}-{:>2}][{}][{:0>2}:{:0>2} - {:0>2}:{:0>2}][{}] {}: {}",
-                        local_time.year(),
-                        local_time.month(),
-                        local_time.day(),
-                        weekday,
-                        local_time.hour(),
-                        local_time.minute(),
-                        next_ts.hour(),
-                        next_ts.minute(),
-                        location,
-                        project,
-                        self.message
-                    ),
-                },
+            Some(next_ts) => {
+                let next_ts = next_ts.with_timezone(&chrono::Local);
+                match location {
+                    None => match project {
+                        None => format!(
+                            "[{:0>4}-{:0>2}-{:0>2}][{}][{:0>2}:{:0>2} - {:0>2}:{:0>2}] {}",
+                            local_time.year(),
+                            local_time.month(),
+                            local_time.day(),
+                            weekday,
+                            local_time.hour(),
+                            local_time.minute(),
+                            next_ts.hour(),
+                            next_ts.minute(),
+                            self.message
+                        ),
+                        Some(project) => format!(
+                            "[{:0>4}-{:0>2}-{:0>2}][{}][{:0>2}:{:0>2} - {:0>2}:{:0>2}] {}: {}",
+                            local_time.year(),
+                            local_time.month(),
+                            local_time.day(),
+                            weekday,
+                            local_time.hour(),
+                            local_time.minute(),
+                            next_ts.hour(),
+                            next_ts.minute(),
+                            project,
+                            self.message
+                        ),
+                    },
+                    Some(location) => match project {
+                        None => format!(
+                            "[{:0>4}-{:0>2}-{:0>2}][{}][{:0>2}:{:0>2} - {:0>2}:{:0>2}][{}] {}",
+                            local_time.year(),
+                            local_time.month(),
+                            local_time.day(),
+                            weekday,
+                            local_time.hour(),
+                            local_time.minute(),
+                            next_ts.hour(),
+                            next_ts.minute(),
+                            location,
+                            self.message
+                        ),
+                        Some(project) => format!(
+                            "[{:0>4}-{:0>2}-{:0>2}][{}][{:0>2}:{:0>2} - {:0>2}:{:0>2}][{}] {}: {}",
+                            local_time.year(),
+                            local_time.month(),
+                            local_time.day(),
+                            weekday,
+                            local_time.hour(),
+                            local_time.minute(),
+                            next_ts.hour(),
+                            next_ts.minute(),
+                            location,
+                            project,
+                            self.message
+                        ),
+                    },
+                }
             },
         }
     }

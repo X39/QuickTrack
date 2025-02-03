@@ -13,11 +13,11 @@ CREATE UNIQUE INDEX days_year_month_day_uindex
 
 CREATE TABLE projects
 (
-    id                INTEGER                            NOT NULL
+    id                INTEGER NOT NULL
         CONSTRAINT projects_pk
             PRIMARY KEY AUTOINCREMENT,
-    title             TEXT                               NOT NULL,
-    timestamp_created DATETIME DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    title             TEXT    NOT NULL,
+    timestamp_created DATETIME         DEFAULT CURRENT_TIMESTAMP NOT NULL,
     active            BOOLEAN NOT NULL DEFAULT FALSE
 );
 
@@ -64,7 +64,8 @@ CREATE TABLE time_log
             REFERENCES locations,
     timestamp_created DATETIME DEFAULT CURRENT_TIMESTAMP NOT NULL,
     message           TEXT                               NOT NULL,
-    mode              INTEGER                            NOT NULL
+    mode              INTEGER                            NOT NULL,
+    deleted           BOOLEAN  DEFAULT FALSE             NOT NULL
 );
 
 CREATE INDEX time_log_day_fk_timestamp_created_index

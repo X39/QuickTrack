@@ -41,7 +41,7 @@ impl CommandHandler {
         let colon_index = command.find(':');
 
         // Load the active project
-        let mut project = db_repository::get_active_project(app.pool.clone()).await;
+        let project = db_repository::get_active_project(app.pool.clone()).await;
         if let Err(e) = project {
             app.log.append(Error(format!("SQLite Error: {:?}", e).into()));
             return false;
@@ -51,7 +51,7 @@ impl CommandHandler {
             |p| p.title.clone());
 
         // Load the active location
-        let mut location = db_repository::get_active_location(app.pool.clone()).await;
+        let location = db_repository::get_active_location(app.pool.clone()).await;
         if let Err(e) = location {
             app.log.append(Error(format!("SQLite Error: {:?}", e).into()));
             return false;

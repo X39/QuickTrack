@@ -35,10 +35,24 @@ pub(crate) async fn get_project(
     pool: Pool<Sqlite>,
     project: &String,
 ) -> Result<Option<Project>, sqlx::Error> {
-    let projects = query!(
-        "SELECT * FROM projects WHERE title = ?;",
-        project
-    );
+    let projects = query!("SELECT * FROM projects WHERE title = ?;", project);
+    let project = projects.fetch_optional(&pool).await?;
+    if let Some(project) = project {
+        Ok(Some(Project {
+            id: project.id,
+            title: project.title,
+            timestamp_created: to_date_time_utc(project.timestamp_created),
+            active: project.active,
+        }))
+    } else {
+        Ok(None)
+    }
+}
+pub(crate) async fn get_project_by_id(
+    pool: Pool<Sqlite>,
+    project_id: i64,
+) -> Result<Option<Project>, sqlx::Error> {
+    let projects = query!("SELECT * FROM projects WHERE id = ?;", project_id);
     let project = projects.fetch_optional(&pool).await?;
     if let Some(project) = project {
         Ok(Some(Project {
@@ -91,10 +105,24 @@ pub(crate) async fn get_location(
     pool: Pool<Sqlite>,
     location: &String,
 ) -> Result<Option<Location>, sqlx::Error> {
-    let locations = query!(
-        "SELECT * FROM locations WHERE title = ?;",
-        location
-    );
+    let locations = query!("SELECT * FROM locations WHERE title = ?;", location);
+    let location = locations.fetch_optional(&pool).await?;
+    if let Some(location) = location {
+        Ok(Some(Location {
+            id: location.id,
+            title: location.title,
+            timestamp_created: to_date_time_utc(location.timestamp_created),
+            active: location.active,
+        }))
+    } else {
+        Ok(None)
+    }
+}
+pub(crate) async fn get_location_by_id(
+    pool: Pool<Sqlite>,
+    location_id: i64,
+) -> Result<Option<Location>, sqlx::Error> {
+    let locations = query!("SELECT * FROM locations WHERE id = ?;", location_id);
     let location = locations.fetch_optional(&pool).await?;
     if let Some(location) = location {
         Ok(Some(Location {
@@ -183,7 +211,7 @@ pub(crate) async fn add_time_log(
     let audit_kind = TimeLogKind::LogLineAppended as u8;
     let row = query_scalar!(
         "INSERT INTO time_log_audit (timestamp_created, kind, message) VALUES (?, ?, ?);\
-        INSERT INTO time_log (day_fk, project_fk, location_fk, timestamp_created, message, mode)\
+         INSERT INTO time_log (day_fk, project_fk, location_fk, timestamp_created, message, mode)\
          VALUES (?, ?, ?, ?, ?, ?) RETURNING id;",
         ts,
         audit_kind,
@@ -197,9 +225,12 @@ pub(crate) async fn add_time_log(
     )
     .fetch_one(&pool)
     .await?;
-    let row = query!("SELECT * FROM time_log WHERE id = ?", row)
-        .fetch_one(&pool)
-        .await?;
+    let row = query!(
+        "SELECT * FROM time_log WHERE deleted = FALSE AND id = ?",
+        row
+    )
+    .fetch_one(&pool)
+    .await?;
     Ok(TimeLog {
         id: row.id,
         timestamp_created: to_date_time_utc(row.timestamp_created),
@@ -211,24 +242,125 @@ pub(crate) async fn add_time_log(
     })
 }
 
-pub(crate) async fn set_active_project(pool: Pool<Sqlite>, project: &String) -> Result<(), sqlx::Error> {
+pub async fn drop_time_log(pool: Pool<Sqlite>, time_log_id: i64) -> Result<(), sqlx::Error> {
+    let ts = Utc::now();
+    query_scalar!(
+        "INSERT INTO time_log_audit (timestamp_created, kind, message) VALUES (?, ?, 'Marked time-log as deleted');
+         UPDATE time_log SET deleted = TRUE WHERE id = ?;", ts, TimeLogKind::LogLineMarkedAsDeleted as u8, time_log_id)
+        .execute(&pool).await?;
+    Ok(())
+}
+
+pub(crate) async fn set_active_project(
+    pool: Pool<Sqlite>,
+    project: &String,
+) -> Result<(), sqlx::Error> {
     query!("UPDATE projects SET active = FALSE WHERE active = TRUE;")
         .execute(&pool)
         .await?;
 
-    query!("UPDATE projects SET active = TRUE WHERE title = ?;", project)
-        .execute(&pool)
-        .await?;
+    query!(
+        "UPDATE projects SET active = TRUE WHERE title = ?;",
+        project
+    )
+    .execute(&pool)
+    .await?;
     Ok(())
 }
 
-pub(crate) async fn set_active_location(pool: Pool<Sqlite>, location: &String) -> Result<(), sqlx::Error> {
+pub(crate) async fn set_active_location(
+    pool: Pool<Sqlite>,
+    location: &String,
+) -> Result<(), sqlx::Error> {
     query!("UPDATE locations SET active = FALSE WHERE active = TRUE;")
         .execute(&pool)
         .await?;
 
-    query!("UPDATE locations SET active = TRUE WHERE title = ?;", location)
-        .execute(&pool)
-        .await?;
+    query!(
+        "UPDATE locations SET active = TRUE WHERE title = ?;",
+        location
+    )
+    .execute(&pool)
+    .await?;
     Ok(())
+}
+
+pub(crate) async fn get_n_days(
+    pool: Pool<Sqlite>,
+    skip: i64,
+    limit: i64,
+) -> Result<Vec<Day>, sqlx::Error> {
+    let rows = query!(
+        "SELECT * FROM days ORDER BY year DESC, month DESC, day DESC LIMIT ? OFFSET ?;",
+        limit,
+        skip
+    )
+    .fetch_all(&pool)
+    .await?;
+
+    let mut days: Vec<Day> = Vec::new();
+    for row in rows {
+        days.push(Day {
+            id: row.id,
+            day: row.day as u16,
+            month: row.month as u16,
+            year: row.year as u16,
+        })
+    }
+    days.reverse();
+    Ok(days)
+}
+
+pub(crate) async fn get_time_logs_of_day(
+    pool: Pool<Sqlite>,
+    day_id: i64,
+) -> Result<Vec<TimeLog>, sqlx::Error> {
+    let rows = query!(
+        "SELECT * FROM time_log WHERE deleted = FALSE AND day_fk = ?;",
+        day_id
+    )
+    .fetch_all(&pool)
+    .await?;
+
+    let mut time_logs = vec![];
+    for row in rows {
+        time_logs.push(TimeLog {
+            id: row.id,
+            timestamp_created: to_date_time_utc(row.timestamp_created),
+            message: row.message,
+            day_id: row.day_fk,
+            mode: TimeLogMode::from(row.mode),
+            project_id: row.project_fk,
+            location_id: row.location_fk,
+        })
+    }
+    Ok(time_logs)
+}
+
+pub async fn get_n_time_logs_id_desc(
+    pool: Pool<Sqlite>,
+    skip: i64,
+    take: i64,
+) -> Result<Vec<TimeLog>, sqlx::Error> {
+    let rows = query!(
+        "SELECT * FROM time_log ORDER BY id DESC LIMIT ? OFFSET ?;",
+        take,
+        skip
+    )
+    .fetch_all(&pool)
+    .await?;
+
+    let mut time_logs = vec![];
+    for row in rows {
+        time_logs.push(TimeLog {
+            id: row.id,
+            timestamp_created: to_date_time_utc(row.timestamp_created),
+            message: row.message,
+            day_id: row.day_fk,
+            mode: TimeLogMode::from(row.mode),
+            project_id: row.project_fk,
+            location_id: row.location_fk,
+        });
+    }
+    Ok(time_logs)
 }

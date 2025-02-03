@@ -7,9 +7,10 @@ use ratatui::prelude::*;
 use ratatui::prelude::{Layout, Stylize};
 use ratatui::symbols::border;
 use ratatui::text::Line;
-use ratatui::widgets::{Block, List, ListItem, ListState, Paragraph};
+use ratatui::widgets::{Block, Borders, List, ListItem, ListState, Padding, Paragraph};
 use ratatui::Frame;
 use std::cmp::max;
+use ratatui::layout::Constraint::Max;
 use tui_input::backend::crossterm::EventHandler;
 use tui_input::Input;
 
@@ -18,6 +19,8 @@ pub struct DefaultWindow {
     input: Input,
     log_state: ListState,
     command_handler: CommandHandler,
+    project: String,
+    location: String,
 }
 
 impl DefaultWindow {
@@ -26,6 +29,35 @@ impl DefaultWindow {
             input: Input::default(),
             log_state: ListState::default(),
             command_handler: CommandHandler::new(),
+            project: "".to_string(),
+            location: "".to_string(),
+        }
+    }
+
+    pub async fn update_project_from_db(self: &mut Self, app: &AppContext) {
+        let project = crate::db_repository::get_active_project(app.pool.clone()).await;
+        if let Err(e) = project {
+            app.log.append(Message::Error(format!("Failed to update active project in view - SQLite Error: {:?}", e)));
+        } else {
+            let project = project.unwrap();
+            if let Some(project) = project {
+                self.project = project.title;
+            } else {
+                self.project = "".to_string();
+            }
+        }
+    }
+    pub async fn update_location_from_db(self: &mut Self, app: &AppContext) {
+        let location = crate::db_repository::get_active_location(app.pool.clone()).await;
+        if let Err(e) = location {
+            app.log.append(Message::Error(format!("Failed to update active location in view - SQLite Error: {:?}", e)));
+        } else {
+            let location = location.unwrap();
+            if let Some(location) = location {
+                self.location = location.title;
+            } else {
+                self.location = "".to_string();
+            }
         }
     }
 }
@@ -56,6 +88,7 @@ impl Window for DefaultWindow {
         }))
         .block(
             Block::bordered()
+                .title_top("Output")
                 .title_bottom(Line::from(
                     if messages.len() < 10 {
                         format!(
@@ -103,15 +136,28 @@ impl Window for DefaultWindow {
         frame.render_stateful_widget(history, history_area, &mut self.log_state);
 
         let scroll = self.input.visual_scroll(input_area.width as usize);
+        let input_layout = Layout::horizontal([Length((self.location.len() + 2) as u16), Length((self.project.len() + 2) as u16), Min(0)]);
+        let [location_area, project_area, user_input_area] = input_layout.areas(input_area);
+
+        let text_input = Paragraph::new(self.location.as_str())
+            .scroll((0, scroll as u16))
+            .block(Block::bordered().border_set(border::THICK).title("Location"));
+        frame.render_widget(text_input, location_area);
+
+        let text_input = Paragraph::new(self.project.as_str())
+            .scroll((0, scroll as u16))
+            .block(Block::bordered().border_set(border::THICK).title("Project"));
+        frame.render_widget(text_input, project_area);
+
         let text_input = Paragraph::new(self.input.value())
             .style(Style::default().fg(Color::Yellow))
             .scroll((0, scroll as u16))
-            .block(Block::bordered().border_set(border::THICK));
-        frame.render_widget(text_input, input_area);
+            .block(Block::bordered().border_set(border::THICK).title("Input"));
+        frame.render_widget(text_input, user_input_area);
 
         frame.set_cursor_position(Position::new(
-            input_area.x + (self.input.visual_cursor().max(scroll) - scroll) as u16 + 1,
-            input_area.y + 1,
+            user_input_area.x + (self.input.visual_cursor().max(scroll) - scroll) as u16 + 1,
+            user_input_area.y + 1,
         ));
     }
     async fn step(self: &mut Self, app: &AppContext) {}
@@ -141,6 +187,8 @@ impl Window for DefaultWindow {
                         .await
                     {
                         self.input.reset();
+                        self.update_project_from_db(app).await;
+                        self.update_location_from_db(app).await;
                     }
                     self.log_state.select(Some(app.log.messages().len()));
                 }

@@ -1,7 +1,6 @@
 ﻿use crate::application::AppContext;
 use crate::log::Message::{Error, Failure, Success, Warning};
-use clap::ArgAction::Help;
-use clap::{arg, command, value_parser, ArgGroup, ArgMatches, Command};
+use clap::{arg, command, ArgGroup, ArgMatches, Command};
 
 #[derive(Clone, Debug)]
 pub struct LocationCommand;
