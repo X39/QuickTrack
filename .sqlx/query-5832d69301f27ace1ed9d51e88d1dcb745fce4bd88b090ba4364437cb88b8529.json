@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT * FROM time_log WHERE id = ?",
+  "query": "SELECT * FROM time_log WHERE deleted = FALSE AND id = ?",
   "describe": {
     "columns": [
       {
@@ -37,6 +37,11 @@
         "name": "mode",
         "ordinal": 6,
         "type_info": "Integer"
+      },
+      {
+        "name": "deleted",
+        "ordinal": 7,
+        "type_info": "Bool"
       }
     ],
     "parameters": {
@@ -49,8 +54,9 @@
       false,
       false,
       false,
+      false,
       false
     ]
   },
-  "hash": "ba998a6feacb374dfedb26ff61ed599ee4c18a9bdebb82a8b004e62041a12922"
+  "hash": "5832d69301f27ace1ed9d51e88d1dcb745fce4bd88b090ba4364437cb88b8529"
 }

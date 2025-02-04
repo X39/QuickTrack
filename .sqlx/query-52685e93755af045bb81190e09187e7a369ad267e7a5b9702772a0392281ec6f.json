@@ -1,0 +1,38 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT * FROM days ORDER BY year DESC, month DESC, day DESC LIMIT ? OFFSET ?;",
+  "describe": {
+    "columns": [
+      {
+        "name": "id",
+        "ordinal": 0,
+        "type_info": "Integer"
+      },
+      {
+        "name": "day",
+        "ordinal": 1,
+        "type_info": "Integer"
+      },
+      {
+        "name": "month",
+        "ordinal": 2,
+        "type_info": "Integer"
+      },
+      {
+        "name": "year",
+        "ordinal": 3,
+        "type_info": "Integer"
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "52685e93755af045bb81190e09187e7a369ad267e7a5b9702772a0392281ec6f"
+}

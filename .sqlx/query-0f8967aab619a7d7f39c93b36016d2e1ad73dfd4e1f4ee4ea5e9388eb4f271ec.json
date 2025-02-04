@@ -1,0 +1,62 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT * FROM time_log WHERE deleted = FALSE ORDER BY id DESC LIMIT ? OFFSET ?;",
+  "describe": {
+    "columns": [
+      {
+        "name": "id",
+        "ordinal": 0,
+        "type_info": "Integer"
+      },
+      {
+        "name": "day_fk",
+        "ordinal": 1,
+        "type_info": "Integer"
+      },
+      {
+        "name": "project_fk",
+        "ordinal": 2,
+        "type_info": "Integer"
+      },
+      {
+        "name": "location_fk",
+        "ordinal": 3,
+        "type_info": "Integer"
+      },
+      {
+        "name": "timestamp_created",
+        "ordinal": 4,
+        "type_info": "Datetime"
+      },
+      {
+        "name": "message",
+        "ordinal": 5,
+        "type_info": "Text"
+      },
+      {
+        "name": "mode",
+        "ordinal": 6,
+        "type_info": "Integer"
+      },
+      {
+        "name": "deleted",
+        "ordinal": 7,
+        "type_info": "Bool"
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "0f8967aab619a7d7f39c93b36016d2e1ad73dfd4e1f4ee4ea5e9388eb4f271ec"
+}

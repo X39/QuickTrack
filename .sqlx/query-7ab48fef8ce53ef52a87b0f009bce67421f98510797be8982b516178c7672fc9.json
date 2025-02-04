@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO time_log_audit (timestamp_created, kind, message) VALUES (?, ?, 'Marked time-log as deleted');\n         UPDATE time_log SET deleted = TRUE WHERE id = ?;",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 3
+    },
+    "nullable": []
+  },
+  "hash": "7ab48fef8ce53ef52a87b0f009bce67421f98510797be8982b516178c7672fc9"
+}

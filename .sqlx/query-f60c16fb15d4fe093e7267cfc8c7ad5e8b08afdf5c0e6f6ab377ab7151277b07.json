@@ -1,0 +1,62 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT * FROM time_log WHERE deleted = FALSE AND day_fk = ?;",
+  "describe": {
+    "columns": [
+      {
+        "name": "id",
+        "ordinal": 0,
+        "type_info": "Integer"
+      },
+      {
+        "name": "day_fk",
+        "ordinal": 1,
+        "type_info": "Integer"
+      },
+      {
+        "name": "project_fk",
+        "ordinal": 2,
+        "type_info": "Integer"
+      },
+      {
+        "name": "location_fk",
+        "ordinal": 3,
+        "type_info": "Integer"
+      },
+      {
+        "name": "timestamp_created",
+        "ordinal": 4,
+        "type_info": "Datetime"
+      },
+      {
+        "name": "message",
+        "ordinal": 5,
+        "type_info": "Text"
+      },
+      {
+        "name": "mode",
+        "ordinal": 6,
+        "type_info": "Integer"
+      },
+      {
+        "name": "deleted",
+        "ordinal": 7,
+        "type_info": "Bool"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "f60c16fb15d4fe093e7267cfc8c7ad5e8b08afdf5c0e6f6ab377ab7151277b07"
+}

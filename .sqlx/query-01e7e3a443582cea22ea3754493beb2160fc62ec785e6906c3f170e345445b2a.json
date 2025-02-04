@@ -1,0 +1,38 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT * FROM days WHERE day = ? AND month = ? AND year = ?;",
+  "describe": {
+    "columns": [
+      {
+        "name": "id",
+        "ordinal": 0,
+        "type_info": "Integer"
+      },
+      {
+        "name": "day",
+        "ordinal": 1,
+        "type_info": "Integer"
+      },
+      {
+        "name": "month",
+        "ordinal": 2,
+        "type_info": "Integer"
+      },
+      {
+        "name": "year",
+        "ordinal": 3,
+        "type_info": "Integer"
+      }
+    ],
+    "parameters": {
+      "Right": 3
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "01e7e3a443582cea22ea3754493beb2160fc62ec785e6906c3f170e345445b2a"
+}
