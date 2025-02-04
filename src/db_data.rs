@@ -1,4 +1,4 @@
-﻿use chrono::{Datelike, Timelike, Weekday};
+﻿use chrono::{DateTime, Datelike, Local, TimeZone, Timelike, Weekday};
 
 pub struct Day {
     pub id: i64,
@@ -6,6 +6,18 @@ pub struct Day {
     pub month: u16,
     pub day: u16,
 }
+
+impl Day {
+    pub(crate) fn from_date<Tz: TimeZone>(arg: &DateTime<Tz>) -> Day {
+        Day {
+            id: 0,
+            year: arg.year() as u16,
+            month: arg.month() as u16,
+            day: arg.day() as u16,
+        }
+    }
+}
+
 pub struct Project {
     pub id: i64,
     pub title: String,
@@ -87,7 +99,9 @@ impl TimeLog {
     ) -> String {
         match location {
             Some(location) => match project {
-                Some(project) => self.to_display_string(next_ts, Some(&location.title), Some(&project.title)),
+                Some(project) => {
+                    self.to_display_string(next_ts, Some(&location.title), Some(&project.title))
+                }
                 None => self.to_display_string(next_ts, Some(&location.title), None),
             },
             None => match project {
@@ -223,7 +237,7 @@ impl TimeLog {
                         ),
                     },
                 }
-            },
+            }
         }
     }
 }

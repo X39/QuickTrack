@@ -21,6 +21,8 @@ pub struct DefaultWindow {
     command_handler: CommandHandler,
     project: String,
     location: String,
+    undo_stack: Vec<String>,
+    redo_stack: Vec<String>,
 }
 
 impl DefaultWindow {
@@ -31,6 +33,8 @@ impl DefaultWindow {
             command_handler: CommandHandler::new(),
             project: "".to_string(),
             location: "".to_string(),
+            undo_stack: Vec::new(),
+            redo_stack: Vec::new(),
         }
     }
 
@@ -177,16 +181,50 @@ impl Window for DefaultWindow {
                 if key.kind == KeyEventKind::Press {
                     self.log_state.select_next();
                 }
+            },
+            KeyCode::Up => {
+                if key.kind == KeyEventKind::Press {
+                    let undo_stack_len = self.undo_stack.len();
+                    if undo_stack_len > 0 {
+                        let line = self.input.value().to_string();
+                        if line.len() > 0 {
+                            self.redo_stack.push(line);
+                        }
+                        let line = self.undo_stack.pop().unwrap();
+                        self.input = self.input.clone().with_value(line);
+                    }
+                }
+            }
+            KeyCode::Down => {
+                if key.kind == KeyEventKind::Press {
+                    let redo_stack_len = self.redo_stack.len();
+                    if redo_stack_len > 0 {
+                        let line = self.input.value().to_string();
+                        if line.len() > 0 {
+                            self.undo_stack.push(line);
+                        }
+                        let line = self.redo_stack.pop().unwrap();
+                        self.input = self.input.clone().with_value(line);
+                    }
+                }
             }
             KeyCode::Enter => {
                 if key.kind == KeyEventKind::Press {
-                    let line = self.input.value();
+                    let line = self.input.value().to_string();
                     if self
                         .command_handler
-                        .handle_input(app, &line.to_string())
+                        .handle_input(app, &line)
                         .await
                     {
                         self.input.reset();
+                        for line in self.redo_stack.drain(0..) {
+                            if line.len() == 0 {
+                                continue;
+                            }
+                            self.undo_stack.push(line);
+                        }
+                        self.redo_stack.clear();
+                        self.undo_stack.push(line);
                         self.update_project_from_db(app).await;
                         self.update_location_from_db(app).await;
                     }

@@ -1,5 +1,5 @@
 ﻿use crate::db_data::{Day, Location, Project, TimeLog, TimeLogKind, TimeLogMode};
-use chrono::{DateTime, Datelike, NaiveDateTime, Timelike, Utc};
+use chrono::{DateTime, Datelike, Local, NaiveDateTime, Timelike, Utc};
 use sqlx::{query, query_scalar, Pool, Sqlite};
 
 fn to_date_time_utc(src: NaiveDateTime) -> DateTime<Utc> {
@@ -152,7 +152,7 @@ pub(crate) async fn get_active_location(
         Ok(None)
     }
 }
-pub(crate) async fn get_day(
+pub(crate) async fn get_or_create_day(
     pool: Pool<Sqlite>,
     year: u16,
     month: u16,
@@ -178,6 +178,30 @@ pub(crate) async fn get_day(
         year: day.year as u16,
     })
 }
+pub async fn try_get_day(
+    pool: Pool<Sqlite>,
+    year: u16,
+    month: u16,
+    day: u16,
+) -> Result<Option<Day>, sqlx::Error> {
+    let days = query!(
+        "SELECT * FROM days WHERE day = ? AND month = ? AND year = ?;",
+        day,
+        month,
+        year
+    );
+    let day = days.fetch_optional(&pool).await?;
+    if let Some(day) = day {
+        Ok(Some(Day {
+            id: day.id,
+            day: day.day as u16,
+            month: day.month as u16,
+            year: day.year as u16,
+        }))
+    } else {
+        Ok(None)
+    }
+}
 
 pub(crate) async fn add_time_log(
     pool: Pool<Sqlite>,
@@ -185,8 +209,11 @@ pub(crate) async fn add_time_log(
     location: &String,
     mode: TimeLogMode,
     message: &String,
+    date_time: Option<DateTime<Local>>,
+    day_id: Option<i64>,
 ) -> Result<TimeLog, sqlx::Error> {
-    let ts = Utc::now();
+    let ts = date_time.unwrap_or_else(|| Local::now());
+    let ts = ts.to_utc();
     let tl = TimeLog {
         timestamp_created: ts,
         message: message.to_string(),
@@ -198,13 +225,19 @@ pub(crate) async fn add_time_log(
         location_id: 0,
     };
     let tl = tl.to_display_string(None, Some(location), Some(project));
-    let day = get_day(
-        pool.clone(),
-        ts.year() as u16,
-        ts.month() as u16,
-        ts.day() as u16,
-    )
-    .await?;
+    let day_id = match day_id {
+        None => {
+            let day = get_or_create_day(
+                pool.clone(),
+                ts.year() as u16,
+                ts.month() as u16,
+                ts.day() as u16,
+            )
+                .await?;
+            day.id
+        },
+        Some(day_id) => day_id,
+    };
     let project = get_or_add_project(pool.clone(), project).await?;
     let location = get_or_add_location(pool.clone(), location).await?;
     let mode = mode as u8;
@@ -216,7 +249,7 @@ pub(crate) async fn add_time_log(
         ts,
         audit_kind,
         tl,
-        day.id,
+        day_id,
         project.id,
         location.id,
         ts,
@@ -343,7 +376,7 @@ pub async fn get_n_time_logs_id_desc(
     take: i64,
 ) -> Result<Vec<TimeLog>, sqlx::Error> {
     let rows = query!(
-        "SELECT * FROM time_log ORDER BY id DESC LIMIT ? OFFSET ?;",
+        "SELECT * FROM time_log WHERE deleted = FALSE ORDER BY id DESC LIMIT ? OFFSET ?;",
         take,
         skip
     )
@@ -363,4 +396,20 @@ pub async fn get_n_time_logs_id_desc(
         });
     }
     Ok(time_logs)
+}
+
+pub async fn get_day_by_id(pool: Pool<Sqlite>, day_id: i64) -> Result<Option<Day>, sqlx::Error> {
+    let rows = query!("SELECT * FROM days WHERE id = ?;", day_id)
+        .fetch_optional(&pool)
+        .await?;
+    if let Some(row) = rows {
+        Ok(Some(Day {
+            id: row.id,
+            day: row.day as u16,
+            month: row.month as u16,
+            year: row.year as u16,
+        }))
+    } else {
+        Ok(None)
+    }
 }
